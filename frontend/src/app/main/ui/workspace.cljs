@@ -9,33 +9,34 @@
 
 (ns app.main.ui.workspace
   (:require
-   [beicon.core :as rx]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]
+   [app.common.geom.point :as gpt]
    [app.main.constants :as c]
    [app.main.data.history :as udh]
    [app.main.data.workspace :as dw]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.streams :as ms]
-   [app.main.ui.keyboard :as kbd]
    [app.main.ui.hooks :as hooks]
-   [app.main.ui.workspace.viewport :refer [viewport coordinates]]
+   [app.main.ui.icons :as i]
+   [app.main.ui.keyboard :as kbd]
    [app.main.ui.workspace.colorpalette :refer [colorpalette]]
    [app.main.ui.workspace.context-menu :refer [context-menu]]
    [app.main.ui.workspace.header :refer [header]]
+   [app.main.ui.workspace.left-toolbar :refer [left-toolbar]]
    [app.main.ui.workspace.rules :refer [horizontal-rule vertical-rule]]
    [app.main.ui.workspace.scroll :as scroll]
    [app.main.ui.workspace.sidebar :refer [left-sidebar right-sidebar]]
    [app.main.ui.workspace.sidebar.history :refer [history-dialog]]
-   [app.main.ui.workspace.left-toolbar :refer [left-toolbar]]
+   [app.main.ui.workspace.viewport :refer [viewport coordinates]]
    [app.util.dom :as dom]
-   [app.common.geom.point :as gpt]))
+   [beicon.core :as rx]
+   [okulary.core :as l]
+   [rumext.alpha :as mf]))
 
 ;; --- Workspace
 
 (mf/defc workspace-content
-  [{:keys [page file layout project] :as params}]
+  [{:keys [page-id file layout project] :as params}]
   (let [local          (mf/deref refs/workspace-local)
         left-sidebar?  (:left-sidebar? local)
         right-sidebar? (:right-sidebar? local)
@@ -62,27 +63,51 @@
                              :vport (:vport local)}]
           [:& coordinates]])
 
-       [:& viewport {:page page
-                     :page-id (:id page)
-                     :key (:id page)
+       [:& viewport {:page-id page-id
+                     :key (str page-id)
                      :file file
                      :local local
                      :layout layout}]]]
 
-     [:& left-toolbar {:page page :layout layout}]
+     [:& left-toolbar {:layout layout}]
 
      ;; Aside
      (when left-sidebar?
        [:& left-sidebar
         {:file file
-         :page page
+         :page-id page-id
          :project project
          :layout layout}])
      (when right-sidebar?
        [:& right-sidebar
-        {:page page
+        {:page-id page-id
          :local local
          :layout layout}])]))
+
+(defn trimmed-page-ref
+  [id]
+  (l/derived (fn [state]
+               (let [page-id (:current-page-id state)
+                     data    (:workspace-data state)]
+                 (select-keys (get-in data [:pages-index page-id]) [:id :name])))
+             st/state =))
+
+(mf/defc workspace-page
+  [{:keys [project file layout page-id] :as props}]
+  (mf/use-effect
+   (mf/deps page-id)
+   (fn []
+     (st/emit! (dw/initialize-page page-id))
+     #(st/emit! (dw/finalize-page page-id))))
+
+  (let [page-ref (mf/use-memo (mf/deps page-id) #(trimmed-page-ref page-id))
+        page     (mf/deref page-ref)]
+    (when page
+      [:& workspace-content {:page page
+                             :page-id (:id page)
+                             :project project
+                             :file file
+                             :layout layout}])))
 
 (mf/defc workspace-loader
   []
@@ -100,7 +125,7 @@
      #(st/emit! (dw/finalize-file project-id file-id))))
 
   (mf/use-effect
-   (mf/deps page-id)
+   (mf/deps project-id file-id page-id)
    (fn []
      (st/emit! (dw/initialize-page page-id))
      #(st/emit! (dw/finalize-page page-id))))
@@ -110,7 +135,7 @@
   (let [file    (mf/deref refs/workspace-file)
         project (mf/deref refs/workspace-project)
         layout  (mf/deref refs/workspace-layout)
-        page    (mf/use-memo (mf/deps page-id) #(array-map :id page-id))]
+        page    (mf/deref refs/workspace-page)]
 
     [:section#workspace
      [:& header {:file file
@@ -123,8 +148,8 @@
      (if (and (and file project page)
               (:initialized file))
 
-       [:& workspace-content {:page page
-                              :project project
-                              :file file
-                              :layout layout}]
+       [:& workspace-page {:page-id page-id
+                           :project project
+                           :file file
+                           :layout layout}]
        [:& workspace-loader])]))

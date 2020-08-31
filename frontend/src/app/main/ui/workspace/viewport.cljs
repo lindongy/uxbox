@@ -159,7 +159,7 @@
                          :hover hover}]]))
 
 (mf/defc viewport
-  [{:keys [page page-id local layout] :as props}]
+  [{:keys [page-id local layout] :as props}]
   (let [{:keys [drawing-tool
                 options-mode
                 zoom
@@ -412,6 +412,7 @@
 
     (mf/use-layout-effect
      (fn []
+       (prn "111 viewport" page-id)
        (let [node (mf/ref-val viewport-ref)
              prnt (dom/get-parent node)
 
@@ -424,6 +425,8 @@
              key5 (events/listen js/window EventType.RESIZE on-resize)]
          (st/emit! (dw/initialize-viewport (dom/get-client-size prnt)))
          (fn []
+           (prn "222 viewport" page-id)
+
            (events/unlistenByKey key1)
            (events/unlistenByKey key2)
            (events/unlistenByKey key3)
@@ -464,7 +467,7 @@
       :on-drop on-drop}
 
      [:g
-      [:& frames {:key (:id page)
+      [:& frames {:key page-id
                   :hover (:hover local)
                   :selected (:selected selected)}]
 
@@ -497,7 +500,7 @@
       (when tooltip
         [:& cursor-tooltip {:zoom zoom :tooltip tooltip}])]
 
-     [:& presence/active-cursors {:page page}]
+     #_[:& presence/active-cursors {:page page}]
      [:& selection-rect {:data (:selrect local)}]
      (when (= options-mode :prototype)
        [:& interactions {:selected selected}])]))

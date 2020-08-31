@@ -23,7 +23,7 @@
 ;; --- Component: Left toolbar
 
 (mf/defc left-toolbar
-  [{:keys [page layout] :as props}]
+  [{:keys [layout] :as props}]
   (let [file-input (mf/use-ref nil)
         selected-drawtool (mf/deref refs/selected-drawing-tool)
         select-drawtool #(st/emit! :interrupt

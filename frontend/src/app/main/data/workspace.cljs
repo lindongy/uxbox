@@ -85,6 +85,13 @@
 
 (s/def ::options-mode #{:design :prototype})
 
+(def workspace-file-local-default
+  {:drawing nil
+   :drawing-tool nil
+   :left-sidebar? true
+   :right-sidebar? true
+   :color-for-rename nil})
+
 (def workspace-local-default
   {:zoom 1
    :flags #{}
@@ -109,11 +116,14 @@
   [project-id file-id]
   (us/verify ::us/uuid project-id)
   (us/verify ::us/uuid file-id)
+  (prn "initialize-file" project-id file-id)
 
   (ptk/reify ::initialize-file
     ptk/UpdateEvent
     (update [_ state]
-      (assoc state :workspace-presence {}))
+      (assoc state
+             :workspace-presence {}
+             :workspace-file-local workspace-file-local-default))
 
     ptk/WatchEvent
     (watch [_ state stream]
@@ -145,7 +155,7 @@
 
 (defn- file-initialized
   [project-id file-id]
-  (ptk/reify ::initialized
+  (ptk/reify ::file-initialized
     ptk/UpdateEvent
     (update [_ state]
       (update state :workspace-file
@@ -156,6 +166,7 @@
 
 (defn finalize-file
   [project-id file-id]
+  (prn "finalize-file" project-id file-id)
   (ptk/reify ::finalize
     ptk/UpdateEvent
     (update [_ state]
@@ -167,16 +178,18 @@
              ::dwp/finalize))))
 
 
-;; TODO: we need to refactor this, workspace-data and workspace-page now are the same object
 (defn initialize-page
   [page-id]
+  (prn "initialize-page" page-id)
   (ptk/reify ::initialize-page
     ptk/UpdateEvent
     (update [_ state]
+      ;; TODO: looks workspace-page is unused
       (let [page  (get-in state [:workspace-data :pages-index page-id])
             local (get-in state [:workspace-cache page-id] workspace-local-default)]
         (assoc state
                :current-page-id page-id   ; mainly used by events
+               :workspace-page page
                :workspace-local local
                )))))
 
@@ -189,7 +202,7 @@
       (let [local (:workspace-local state)]
         (-> state
             (assoc-in [:workspace-cache page-id] local)
-            (dissoc :workspace-page))))))
+            (dissoc :current-page-id :workspace-page))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Workspace Page CRUD
@@ -261,6 +274,7 @@
 
 (defn initialize-viewport
   [{:keys [width height] :as size}]
+  (prn "initialize-viewport")
   (letfn [(update* [{:keys [vbox vport] :as local}]
             (let [wprop (/ (:width vport) width)
                   hprop (/ (:height vport) height)]
@@ -969,7 +983,7 @@
   (ptk/reify ::clear-drawing
     ptk/UpdateEvent
     (update [_ state]
-      (update state :workspace-local dissoc :drawing-tool :drawing))))
+      (update state :workspace-file-local dissoc :drawing-tool :drawing))))
 
 (defn select-for-drawing
   ([tool] (select-for-drawing tool nil))
@@ -977,7 +991,7 @@
    (ptk/reify ::select-for-drawing
      ptk/UpdateEvent
      (update [_ state]
-       (update state :workspace-local assoc :drawing-tool tool :drawing data))
+       (update state :workspace-file-local assoc :drawing-tool tool :drawing data))
 
      ptk/WatchEvent
      (watch [_ state stream]

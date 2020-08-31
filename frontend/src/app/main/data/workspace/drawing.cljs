@@ -95,8 +95,9 @@
               stoper  (rx/filter stoper? stream)
               initial @ms/mouse-position
 
-              page-id (get state :current-page-id)
-              objects (get-in state [:workspace-data page-id :objects])
+
+              page-id (:current-page-id state)
+              objects (cph/lookup-page-objects state page-id)
               layout  (get state :workspace-layout)
 
               frames  (cph/select-frames objects)

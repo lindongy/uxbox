@@ -21,13 +21,13 @@
 
 (mf/defc left-sidebar
   {:wrap [mf/memo]}
-  [{:keys [layout page file project] :as props}]
+  [{:keys [layout page-id file project] :as props}]
   [:aside.settings-bar.settings-bar-left
    [:div.settings-bar-inside
     {:data-layout (str/join "," layout)}
     (when (contains? layout :sitemap)
       [:& sitemap {:file file
-                   :page-id (:id page)
+                   :page-id page-id
                    :layout layout}])
     #_(when (contains? layout :document-history)
         [:& history-toolbox])
@@ -39,11 +39,13 @@
 
 ;; --- Right Sidebar (Component)
 
+;; TODO: revisit page prop
+
 (mf/defc right-sidebar
-  [{:keys [layout page local] :as props}]
+  [{:keys [layout page-id local] :as props}]
   [:aside#settings-bar.settings-bar
    [:div.settings-bar-inside
     (when (contains? layout :element-options)
       [:& options-toolbox
-       {:page page
+       {:page {:id page-id}
         :local local}])]])

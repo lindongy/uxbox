@@ -39,8 +39,14 @@
 
 ;; ---- Workspace refs
 
+;; (def workspace-local
+;;   (l/derived :workspace-local st/state))
+
 (def workspace-local
-  (l/derived :workspace-local st/state))
+  (l/derived (fn [state]
+               (merge (:workspace-local state)
+                      (:workspace-file-local state)))
+             st/state =))
 
 (def selected-shapes
   (l/derived :selected workspace-local))
