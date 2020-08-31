@@ -29,7 +29,7 @@
 
 (s/def ::project (s/keys ::req-un [::id ::name]))
 (s/def ::file (s/keys :req-un [::id ::name]))
-(s/def ::page (s/keys :req-un [::id ::name ::cp/data]))
+(s/def ::page ::cp/page)
 
 (s/def ::interactions-mode #{:hide :show :show-on-click})
 
@@ -43,37 +43,38 @@
 (declare bundle-fetched)
 
 (defn initialize
-  [page-id share-token]
+  [{:keys [page-id file-id token] :as params}]
   (ptk/reify ::initialize
     ptk/UpdateEvent
     (update [_ state]
       (assoc state :viewer-local {:zoom 1
                                   :page-id page-id
+                                  :file-id file-id
                                   :interactions-mode :hide
                                   :show-interactions? false}))
 
     ptk/WatchEvent
     (watch [_ state stream]
-      (rx/of (fetch-bundle page-id share-token)))))
+      (rx/of (fetch-bundle params)))))
 
 ;; --- Data Fetching
 
 (defn fetch-bundle
-  [page-id share-token]
+  [{:keys [page-id file-id token]}]
   (ptk/reify ::fetch-file
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [params (cond-> {:page-id page-id}
-                     (string? share-token) (assoc :share-token share-token))]
+      (let [params (cond-> {:page-id page-id
+                            :file-id file-id}
+                     (string? token) (assoc :share-token token))]
         (->> (rp/query :viewer-bundle params)
              (rx/map bundle-fetched)
-             (rx/catch (fn [error-data]
+             #_(rx/catch (fn [error-data]
                          (rx/of (rt/nav :not-found)))))))))
 
 (defn- extract-frames
-  [page]
-  (let [objects (get-in page [:data :objects])
-        root (get objects uuid/zero)]
+  [objects]
+  (let [root (get objects uuid/zero)]
     (->> (:shapes root)
          (map #(get objects %))
          (filter #(= :frame (:type %)))
@@ -81,18 +82,17 @@
          (vec))))
 
 (defn bundle-fetched
-  [{:keys [project file page images] :as bundle}]
+  [{:keys [project file page] :as bundle}]
   (us/verify ::bundle bundle)
   (ptk/reify ::file-fetched
     ptk/UpdateEvent
     (update [_ state]
-      (let [frames (extract-frames page)
-            objects (get-in page [:data :objects])]
+      (let [objects (:objects page)
+            frames  (extract-frames objects)]
         (assoc state :viewer-data {:project project
                                    :objects objects
                                    :file file
                                    :page page
-                                   :images images
                                    :frames frames})))))
 
 (def create-share-link
@@ -226,9 +226,10 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id (get-in state [:viewer-local :page-id])
-            frames (get-in state [:viewer-data :frames])
-            index (d/index-of-pred frames #(= (:id %) frame-id))]
-        (rx/of (rt/nav :viewer {:page-id page-id} {:index index}))))))
+            file-id (get-in state [:viewer-local :file-id])
+            frames  (get-in state [:viewer-data :frames])
+            index   (d/index-of-pred frames #(= (:id %) frame-id))]
+        (rx/of (rt/nav :viewer {:page-id page-id :file-id file-id} {:index index}))))))
 
 ;; --- Shortcuts
 

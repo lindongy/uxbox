@@ -31,21 +31,24 @@
 
 (s/def ::id ::us/uuid)
 (s/def ::file-id ::us/uuid)
+(s/def ::page-id ::us/uuid)
 (s/def ::share-token ::us/string)
 
 (s/def ::viewer-bundle
-  (s/keys :req-un [::file-id]
+  (s/keys :req-un [::file-id ::page-id]
           :opt-un [::profile-id ::share-token]))
 
 (sq/defquery ::viewer-bundle
-  [{:keys [profile-id file-id share-token] :as params}]
+  [{:keys [profile-id file-id page-id share-token] :as params}]
   (db/with-atomic [conn db/pool]
     (let [file    (files/retrieve-file conn file-id)
-          project (retrieve-project conn (:project-id file))]
+          project (retrieve-project conn (:project-id file))
+          page    (get-in file [:data :pages-index page-id])]
       (if (string? share-token)
-        (when (not= share-token (:share-token file))
+        (when (not= share-token (:share-token page))
           (ex/raise :type :validation
                     :code :not-authorized))
         (files/check-edition-permissions! conn profile-id file-id))
-      {:file file
+      {:file (dissoc file :data)
+       :page (get-in file [:data :pages-index page-id])
        :project project})))

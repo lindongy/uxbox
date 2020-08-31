@@ -106,10 +106,11 @@
 ;; --- Component: Viewer Page
 
 (mf/defc viewer-page
-  [{:keys [page-id index token] :as props}]
+  [{:keys [file-id page-id index token] :as props}]
   (mf/use-effect
-   (mf/deps page-id token)
-   #(st/emit! (dv/initialize page-id token)))
+   (mf/deps file-id page-id token)
+   (fn []
+     (st/emit! (dv/initialize props))))
 
   (let [data (mf/deref refs/viewer-data)
         local (mf/deref refs/viewer-local)]

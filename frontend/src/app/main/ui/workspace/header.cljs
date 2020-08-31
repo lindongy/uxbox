@@ -156,7 +156,7 @@
         zoom (mf/deref refs/selected-zoom)
         locale (i18n/use-locale)
         router (mf/deref refs/router)
-        view-url (rt/resolve router :viewer {:page-id page-id} {:index 0})]
+        view-url (rt/resolve router :viewer {:page-id page-id :file-id (:id file)} {:index 0})]
     [:header.workspace-header
      [:div.main-icon
       [:a {:on-click go-back} i/logo-icon]]

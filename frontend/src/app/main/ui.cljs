@@ -50,7 +50,7 @@
     ["/password" :settings-password]
     ["/options" :settings-options]]
 
-   ["/view/:page-id" :viewer]
+   ["/view/:file-id/:page-id" :viewer]
    ["/not-found" :not-found]
    ["/not-authorized" :not-authorized]
 
@@ -113,8 +113,10 @@
     :viewer
     (let [index (d/parse-integer (get-in route [:params :query :index]))
           token (get-in route [:params :query :token])
+          file-id (uuid (get-in route [:params :path :file-id]))
           page-id (uuid (get-in route [:params :path :page-id]))]
       [:& viewer-page {:page-id page-id
+                       :file-id file-id
                        :index index
                        :token token}])
 
