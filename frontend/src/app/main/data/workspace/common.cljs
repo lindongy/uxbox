@@ -54,15 +54,15 @@
      ptk/WatchEvent
      (watch [_ state stream]
        (let [page-id (:current-page-id state)
-             uidx    (get-in state [:workspace-local :undo-index] ::not-found)]
+             uidx    (get-in state [:workspace-undo :index] ::not-found)]
          (rx/concat
           (when (some :page-id changes)
             (rx/of (update-indices page-id)))
 
-          #_(when (and save-undo? (not= uidx ::not-found))
+          (when (and save-undo? (not= uidx ::not-found))
             (rx/of (reset-undo uidx)))
 
-          #_(when save-undo?
+          (when save-undo?
             (let [entry {:undo-changes undo-changes
                          :redo-changes changes}]
               (rx/of (append-undo entry))))))))))
@@ -235,10 +235,9 @@
   (ptk/reify ::materialize-undo
     ptk/UpdateEvent
     (update [_ state]
-      (let [page-id (:current-page-id state)]
-        (-> state
-            (update :workspace-data cp/process-changes changes)
-            (assoc-in [:workspace-local :undo-index] index))))))
+      (-> state
+          (update :workspace-data cp/process-changes changes)
+          (assoc-in [:workspace-undo :index] index)))))
 
 (defn- reset-undo
   [index]
@@ -246,10 +245,8 @@
     ptk/UpdateEvent
     (update [_ state]
       (-> state
-          (update :workspace-local dissoc :undo-index)
-          (update-in [:workspace-local :undo]
-                     (fn [queue]
-                       (into [] (take (inc index) queue))))))))
+          (update :workspace-undo dissoc :undo-index)
+          (update-in [:workspace-undo :items] (fn [queue] (into [] (take (inc index) queue))))))))
 
 (defn- append-undo
   [entry]
@@ -257,18 +254,17 @@
   (ptk/reify ::append-undo
     ptk/UpdateEvent
     (update [_ state]
-      (update-in state [:workspace-local :undo] (fnil conj-undo-entry []) entry))))
+      (update-in state [:workspace-undo :items] (fnil conj-undo-entry []) entry))))
 
 (def undo
   (ptk/reify ::undo
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [local (:workspace-local state)
-            undo  (:undo local [])
-            index (or (:undo-index local)
-                      (dec (count undo)))]
-        (when-not (or (empty? undo) (= index -1))
-          (let [changes (get-in undo [index :undo-changes])]
+      (let [undo  (:workspace-undo state)
+            items (:items undo)
+            index (or (:index undo) (dec (count items)))]
+        (when-not (or (empty? items) (= index -1))
+          (let [changes (get-in items [index :undo-changes])]
             (rx/of (materialize-undo changes (dec index))
                    (commit-changes changes [] {:save-undo? false}))))))))
 
@@ -276,12 +272,11 @@
   (ptk/reify ::redo
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [local (:workspace-local state)
-            undo (:undo local [])
-            index (or (:undo-index local)
-                      (dec (count undo)))]
-        (when-not (or (empty? undo) (= index (dec (count undo))))
-          (let [changes (get-in undo [(inc index) :redo-changes])]
+      (let [undo  (:workspace-undo state)
+            items (:items undo)
+            index (or (:index undo) (dec (count items)))]
+        (when-not (or (empty? items) (= index (dec items)))
+          (let [changes (get-in items [(inc index) :redo-changes])]
             (rx/of (materialize-undo changes (inc index))
                    (commit-changes changes [] {:save-undo? false}))))))))
 
@@ -289,7 +284,13 @@
   (ptk/reify ::reset-undo
     ptk/UpdateEvent
     (update [_ state]
-      (update state :workspace-local dissoc :undo-index :undo))))
+      (assoc state :workspace-undo {}))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Shapes
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
 (defn expand-all-parents

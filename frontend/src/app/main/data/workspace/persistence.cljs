@@ -176,6 +176,7 @@
     ptk/UpdateEvent
     (update [_ state]
       (assoc state
+             :workspace-undo {}
              :workspace-project project
              :workspace-file file
              :workspace-data (:data file)

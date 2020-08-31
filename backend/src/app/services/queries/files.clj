@@ -20,9 +20,6 @@
    [app.services.queries.projects :as projects]
    [app.util.blob :as blob]))
 
-;; TODO: remove unused window functions because we no longer need
-;; query pages because they aready part of file row
-
 (declare decode-row)
 (declare decode-row-xf)
 
@@ -88,10 +85,7 @@
                                 profile-id team-id
                                 profile-id team-id
                                 search-term])]
-    (->> rows
-         (map decode-row)
-         (map pmg/migrate-file)
-         (vec))))
+    (into [] decode-row-xf rows)))
 
 
 ;; --- Query: Project Files
@@ -206,6 +200,8 @@
     (retrieve-file-users conn id)))
 
 ;; --- Query: Shared Library Files
+
+;; TODO: remove the counts, because they are no longer needed.
 
 (def ^:private sql:shared-files
   "select f.*,
