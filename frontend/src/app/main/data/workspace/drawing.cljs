@@ -41,15 +41,15 @@
     (ptk/reify ::start-drawing
       ptk/UpdateEvent
       (update [_ state]
-        (update-in state [:workspace-local :drawing-lock] #(if (nil? %) id %)))
+        (update-in state [:workspace-drawing :lock] #(if (nil? %) id %)))
 
       ptk/WatchEvent
       (watch [_ state stream]
-        (let [lock (get-in state [:workspace-local :drawing-lock])]
+        (let [lock (get-in state [:workspace-drawing :lock])]
           (when (= lock id)
             (rx/merge (->> (rx/filter #(= % handle-finish-drawing) stream)
                            (rx/take 1)
-                           (rx/map (fn [_] #(update % :workspace-local dissoc :drawing-lock))))
+                           (rx/map (fn [_] #(update % :workspace-drawing dissoc :lock))))
                       (rx/of (handle-drawing type)))))))))
 
 (defn handle-drawing
@@ -58,7 +58,7 @@
     ptk/UpdateEvent
     (update [_ state]
       (let [data (cp/make-minimal-shape type)]
-        (update-in state [:workspace-local :drawing] merge data)))
+        (update-in state [:workspace-drawing :object] merge data)))
 
     ptk/WatchEvent
     (watch [_ state stream]
@@ -84,7 +84,7 @@
                   (assoc-in [:modifiers :resize-rotation] 0))))
 
           (update-drawing [state point lock? point-snap]
-            (update-in state [:workspace-local :drawing] resize-shape point lock? point-snap))]
+            (update-in state [:workspace-drawing :object] resize-shape point lock? point-snap))]
 
     (ptk/reify ::handle-drawing-generic
       ptk/WatchEvent
@@ -108,18 +108,18 @@
                           uuid/zero)
 
               shape (-> state
-                        (get-in [:workspace-local :drawing])
+                        (get-in [:workspace-drawing :object])
                         (geom/setup {:x (:x initial) :y (:y initial) :width 1 :height 1})
                         (assoc :frame-id fid)
                         (assoc ::initialized? true))]
           (rx/concat
            ;; Add shape to drawing state
-           (rx/of #(assoc-in state [:workspace-local :drawing] shape))
+           (rx/of #(assoc-in state [:workspace-drawing :object] shape))
 
            ;; Initial SNAP
            (->> (snap/closest-snap-point page-id [shape] layout initial)
                 (rx/map (fn [{:keys [x y]}]
-                          #(update-in % [:workspace-local :drawing] assoc :x x :y y))))
+                          #(update-in % [:workspace-drawing :object] assoc :x x :y y))))
 
            (->> ms/mouse-position
                 (rx/with-latest vector ms/mouse-position-ctrl)
@@ -147,22 +147,22 @@
 
           (initialize-drawing [state point]
             (-> state
-                (assoc-in [:workspace-local :drawing :segments] [point point])
-                (assoc-in [:workspace-local :drawing ::initialized?] true)))
+                (assoc-in [:workspace-drawing :object :segments] [point point])
+                (assoc-in [:workspace-drawing :object ::initialized?] true)))
 
           (insert-point-segment [state point]
             (-> state
-                (update-in [:workspace-local :drawing :segments] (fnil conj []) point)))
+                (update-in [:workspace-drawing :object :segments] (fnil conj []) point)))
 
           (update-point-segment [state index point]
-            (let [segments (count (get-in state [:workspace-local :drawing :segments]))
+            (let [segments (count (get-in state [:workspace-drawing :object :segments]))
                   exists? (< -1 index segments)]
               (cond-> state
-                exists? (assoc-in [:workspace-local :drawing :segments index] point))))
+                exists? (assoc-in [:workspace-drawing :object :segments index] point))))
 
           (finish-drawing-path [state]
             (update-in
-             state [:workspace-local :drawing]
+             state [:workspace-drawing :object]
              (fn [shape] (-> shape
                            (update :segments #(vec (butlast %)))
                            (geom/update-path-selrect)))))]
@@ -233,14 +233,14 @@
             (ms/mouse-event? event) (= type :up))
 
           (initialize-drawing [state]
-            (assoc-in state [:workspace-local :drawing ::initialized?] true))
+            (assoc-in state [:workspace-drawing :object ::initialized?] true))
 
           (insert-point-segment [state point]
-            (update-in state [:workspace-local :drawing :segments] (fnil conj []) point))
+            (update-in state [:workspace-drawing :object :segments] (fnil conj []) point))
 
           (finish-drawing-curve [state]
             (update-in
-             state [:workspace-local :drawing]
+             state [:workspace-drawing :object]
              (fn [shape]
                (-> shape
                    (update :segments #(path/simplify % simplify-tolerance))
@@ -264,7 +264,7 @@
   (ptk/reify ::handle-finish-drawing
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [shape (get-in state [:workspace-local :drawing])]
+      (let [shape (get-in state [:workspace-drawing :object])]
         (rx/concat
          (rx/of dw/clear-drawing)
          (when (::initialized? shape)
@@ -285,5 +285,5 @@
   (ptk/reify ::close-drawing-path
     ptk/UpdateEvent
     (update [_ state]
-      (assoc-in state [:workspace-local :drawing :close?] true))))
+      (assoc-in state [:workspace-drawing :object :close?] true))))
 

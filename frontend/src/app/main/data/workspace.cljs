@@ -86,9 +86,7 @@
 (s/def ::options-mode #{:design :prototype})
 
 (def workspace-file-local-default
-  {:drawing nil
-   :drawing-tool nil
-   :left-sidebar? true
+  {:left-sidebar? true
    :right-sidebar? true
    :color-for-rename nil})
 
@@ -97,8 +95,6 @@
    :flags #{}
    :selected (d/ordered-set)
    :expanded {}
-   :drawing nil
-   :drawing-tool nil
    :tooltip nil
    :options-mode :design
    :draw-interaction-to nil
@@ -983,7 +979,7 @@
   (ptk/reify ::clear-drawing
     ptk/UpdateEvent
     (update [_ state]
-      (update state :workspace-file-local dissoc :drawing-tool :drawing))))
+      (update state :workspace-drawing dissoc :tool :object))))
 
 (defn select-for-drawing
   ([tool] (select-for-drawing tool nil))
@@ -991,7 +987,7 @@
    (ptk/reify ::select-for-drawing
      ptk/UpdateEvent
      (update [_ state]
-       (update state :workspace-file-local assoc :drawing-tool tool :drawing data))
+       (update state :workspace-drawing assoc :tool tool :object data))
 
      ptk/WatchEvent
      (watch [_ state stream]

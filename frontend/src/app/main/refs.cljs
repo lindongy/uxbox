@@ -39,8 +39,12 @@
 
 ;; ---- Workspace refs
 
+
 ;; (def workspace-local
 ;;   (l/derived :workspace-local st/state))
+
+(def workspace-drawing
+  (l/derived :workspace-drawing st/state))
 
 (def workspace-local
   (l/derived (fn [state]
@@ -54,11 +58,12 @@
 (def selected-zoom
   (l/derived :zoom workspace-local))
 
+
 (def selected-drawing-tool
-  (l/derived :drawing-tool workspace-local))
+  (l/derived :tool workspace-drawing))
 
 (def current-drawing-shape
-  (l/derived :drawing workspace-local))
+  (l/derived :object workspace-drawing))
 
 (def selected-edition
   (l/derived :edition workspace-local))

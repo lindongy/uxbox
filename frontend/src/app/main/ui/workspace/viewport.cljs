@@ -159,9 +159,8 @@
                          :hover hover}]]))
 
 (mf/defc viewport
-  [{:keys [page-id local layout] :as props}]
-  (let [{:keys [drawing-tool
-                options-mode
+  [{:keys [page-id page local layout] :as props}]
+  (let [{:keys [options-mode
                 zoom
                 flags
                 vport
@@ -171,9 +170,12 @@
                 selected
                 panning]} local
 
-        file (mf/deref refs/workspace-file)
-        viewport-ref (mf/use-ref nil)
+        file          (mf/deref refs/workspace-file)
+        viewport-ref  (mf/use-ref nil)
         last-position (mf/use-var nil)
+        drawing       (mf/deref refs/workspace-drawing)
+        drawing-tool  (:tool drawing)
+        drawing-obj   (:object drawing)
 
         zoom (or zoom 1)
 
@@ -476,8 +478,8 @@
                                 :zoom zoom
                                 :edition edition}])
 
-      (when-let [drawing-shape (:drawing local)]
-        [:& draw-area {:shape drawing-shape
+      (when drawing-obj
+        [:& draw-area {:shape drawing-obj
                        :zoom zoom
                        :modifiers (:modifiers local)}])
 
@@ -486,7 +488,7 @@
 
       [:& snap-points {:layout layout
                        :transform (:transform local)
-                       :drawing (:drawing local)
+                       :drawing drawing-obj
                        :zoom zoom
                        :page-id page-id
                        :selected selected}]
@@ -500,7 +502,7 @@
       (when tooltip
         [:& cursor-tooltip {:zoom zoom :tooltip tooltip}])]
 
-     #_[:& presence/active-cursors {:page page}]
+     [:& presence/active-cursors {:page page}]
      [:& selection-rect {:data (:selrect local)}]
      (when (= options-mode :prototype)
        [:& interactions {:selected selected}])]))
