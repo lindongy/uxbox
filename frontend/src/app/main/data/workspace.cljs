@@ -112,7 +112,6 @@
   [project-id file-id]
   (us/verify ::us/uuid project-id)
   (us/verify ::us/uuid file-id)
-  (prn "initialize-file" project-id file-id)
 
   (ptk/reify ::initialize-file
     ptk/UpdateEvent
@@ -162,7 +161,6 @@
 
 (defn finalize-file
   [project-id file-id]
-  (prn "finalize-file" project-id file-id)
   (ptk/reify ::finalize
     ptk/UpdateEvent
     (update [_ state]
@@ -176,7 +174,6 @@
 
 (defn initialize-page
   [page-id]
-  (prn "initialize-page" page-id)
   (ptk/reify ::initialize-page
     ptk/UpdateEvent
     (update [_ state]
@@ -270,7 +267,6 @@
 
 (defn initialize-viewport
   [{:keys [width height] :as size}]
-  (prn "initialize-viewport")
   (letfn [(update* [{:keys [vbox vport] :as local}]
             (let [wprop (/ (:width vport) width)
                   hprop (/ (:height vport) height)]

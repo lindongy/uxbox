@@ -124,18 +124,11 @@
      (st/emit! (dw/initialize-file project-id file-id))
      #(st/emit! (dw/finalize-file project-id file-id))))
 
-  (mf/use-effect
-   (mf/deps project-id file-id page-id)
-   (fn []
-     (st/emit! (dw/initialize-page page-id))
-     #(st/emit! (dw/finalize-page page-id))))
-
   (hooks/use-shortcuts dw/shortcuts)
 
   (let [file    (mf/deref refs/workspace-file)
         project (mf/deref refs/workspace-project)
-        layout  (mf/deref refs/workspace-layout)
-        page    (mf/deref refs/workspace-page)]
+        layout  (mf/deref refs/workspace-layout)]
 
     [:section#workspace
      [:& header {:file file
@@ -145,7 +138,7 @@
 
      [:& context-menu]
 
-     (if (and (and file project page)
+     (if (and (and file project)
               (:initialized file))
 
        [:& workspace-page {:page-id page-id

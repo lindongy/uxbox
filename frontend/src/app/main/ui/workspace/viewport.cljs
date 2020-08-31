@@ -414,7 +414,6 @@
 
     (mf/use-layout-effect
      (fn []
-       (prn "111 viewport" page-id)
        (let [node (mf/ref-val viewport-ref)
              prnt (dom/get-parent node)
 
@@ -427,8 +426,6 @@
              key5 (events/listen js/window EventType.RESIZE on-resize)]
          (st/emit! (dw/initialize-viewport (dom/get-client-size prnt)))
          (fn []
-           (prn "222 viewport" page-id)
-
            (events/unlistenByKey key1)
            (events/unlistenByKey key2)
            (events/unlistenByKey key3)
