@@ -116,6 +116,8 @@
 
 (declare remote-user-cursors)
 
+
+;; TODO: revisit the refs usage (vs props)
 (mf/defc shape-outlines
   {::mf/wrap-props false}
   [props]
@@ -135,13 +137,13 @@
   {::mf/wrap [mf/memo]
    ::mf/wrap-props false}
   [props]
-  (let [data     (mf/deref refs/workspace-data)
+  (let [data     (mf/deref refs/workspace-page)
         hover    (unchecked-get props "hover")
         selected (unchecked-get props "selected")
-        objects (:objects data)
-        root    (get objects uuid/zero)
-        shapes  (->> (:shapes root)
-                     (map #(get objects %)))]
+        objects  (:objects data)
+        root     (get objects uuid/zero)
+        shapes   (->> (:shapes root)
+                      (map #(get objects %)))]
     [:*
      [:g.shapes
       (for [item shapes]
@@ -157,7 +159,7 @@
                          :hover hover}]]))
 
 (mf/defc viewport
-  [{:keys [page local layout] :as props}]
+  [{:keys [page page-id local layout] :as props}]
   (let [{:keys [drawing-tool
                 options-mode
                 zoom
@@ -483,10 +485,14 @@
                        :transform (:transform local)
                        :drawing (:drawing local)
                        :zoom zoom
-                       :page-id (:id page)
+                       :page-id page-id
                        :selected selected}]
 
-      [:& snap-distances {:layout layout}]
+      [:& snap-distances {:layout layout
+                          :zoom zoom
+                          :transform (:transform local)
+                          :selected selected
+                          :page-id page-id}]
 
       (when tooltip
         [:& cursor-tooltip {:zoom zoom :tooltip tooltip}])]

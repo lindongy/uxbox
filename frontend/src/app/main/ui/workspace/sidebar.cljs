@@ -14,27 +14,28 @@
    [app.main.ui.workspace.sidebar.history :refer [history-toolbox]]
    [app.main.ui.workspace.sidebar.layers :refer [layers-toolbox]]
    [app.main.ui.workspace.sidebar.options :refer [options-toolbox]]
-   [app.main.ui.workspace.sidebar.sitemap :refer [sitemap-toolbox]]
+   [app.main.ui.workspace.sidebar.sitemap :refer [sitemap]]
    [app.main.ui.workspace.sidebar.assets :refer [assets-toolbox]]))
 
 ;; --- Left Sidebar (Component)
 
 (mf/defc left-sidebar
   {:wrap [mf/memo]}
-  [{:keys [layout page file] :as props}]
+  [{:keys [layout page file project] :as props}]
   [:aside.settings-bar.settings-bar-left
    [:div.settings-bar-inside
     {:data-layout (str/join "," layout)}
     (when (contains? layout :sitemap)
-      [:& sitemap-toolbox {:file file
-                           :page page
-                           :layout layout}])
-    (when (contains? layout :document-history)
-      [:& history-toolbox])
+      [:& sitemap {:file file
+                   :page-id (:id page)
+                   :layout layout}])
+    #_(when (contains? layout :document-history)
+        [:& history-toolbox])
     (when (contains? layout :layers)
-      [:& layers-toolbox {:page page}])
+      [:& layers-toolbox])
     (when (contains? layout :assets)
-      [:& assets-toolbox])]])
+      [:& assets-toolbox {:team-id (:team-id project)
+                          :file file}])]])
 
 ;; --- Right Sidebar (Component)
 
@@ -43,5 +44,6 @@
   [:aside#settings-bar.settings-bar
    [:div.settings-bar-inside
     (when (contains? layout :element-options)
-      [:& options-toolbox {:page page
-                           :local local}])]])
+      [:& options-toolbox
+       {:page page
+        :local local}])]])
