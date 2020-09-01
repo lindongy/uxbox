@@ -53,3 +53,7 @@
 ;;                objects)))))
 
 
+(defmethod migrate 2
+  [data]
+  (assoc data :components {}))
+

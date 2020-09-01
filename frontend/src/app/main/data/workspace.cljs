@@ -1264,20 +1264,24 @@
         (rx/of (dwc/update-shapes-recursive [id] update-fn))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; GROUPS
+;; GROUPS AND COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn group-shape
-  [id frame-id selected selection-rect]
-  {:id id
-   :type :group
-   :name (name (gensym "Group-"))
-   :shapes []
-   :frame-id frame-id
-   :x (:x selection-rect)
-   :y (:y selection-rect)
-   :width (:width selection-rect)
-   :height (:height selection-rect)})
+(defn- shapes-for-grouping
+  [objects selected]
+  (->> selected
+       (map #(get objects %))
+       (filter #(not= :frame (:type %)))
+       (map #(assoc % ::index (cph/position-on-parent (:id %) objects)))
+       (sort-by ::index)))
+
+(defn- make-group
+  [shapes prefix]
+  (let [selrect   (geom/selection-rect shapes)
+        frame-id  (-> shapes first :frame-id)
+        parent-id (-> shapes first :parent-id)]
+    (-> (cp/make-minimal-group frame-id selrect prefix)
+        (geom/setup selrect))))
 
 (def group-selected
   (ptk/reify ::group-selected
@@ -1287,50 +1291,37 @@
             page-id  (:current-page-id state)
             objects  (dwc/lookup-page-objects state page-id)
             selected (get-in state [:workspace-local :selected])
-            items    (->> selected
-                          (map #(get objects %))
-                          (filter #(not= :frame (:type %)))
-                          (map #(assoc % ::index (cph/position-on-parent (:id %) objects)))
-                          (sort-by ::index))]
-
-        (when (not-empty items)
-          (let [selrect   (geom/selection-rect items)
-                frame-id  (-> items first :frame-id)
-                parent-id (-> items first :parent-id)
-                group     (-> (group-shape id frame-id selected selrect)
-                              (geom/setup selrect))
-
-                index     (::index (first items))
-
+            shapes   (shapes-for-grouping objects selected)]
+        (when-not (empty? shapes)
+          (let [group (make-group shapes "Group-")
                 rchanges  [{:type :add-obj
-                            :id id
+                            :id (:id group)
                             :page-id page-id
-                            :frame-id frame-id
-                            :parent-id parent-id
+                            :frame-id (:frame-id (first shapes))
+                            :parent-id (:parent-id (first shapes))
                             :obj group
-                            :index index}
+                            :index (::index (first shapes))}
                            {:type :mov-objects
                             :page-id page-id
-                            :parent-id id
-                            :shapes (->> items
-                                         (map :id)
-                                         (into #{})
-                                         (vec))}]
+                            :parent-id (:id group)
+                            :shapes (map :id shapes)}]
 
-                uchanges
-                (reduce (fn [res obj]
-                          (conj res {:type :mov-objects
-                                     :page-id page-id
-                                     :parent-id (:parent-id obj)
-                                     :index (::index obj)
-                                     :shapes [(:id obj)]}))
-                        []
-                        items)
+                uchanges (conj
+                           (reduce (fn [res obj]
+                                     (conj res {:type :mov-objects
+                                                :page-id page-id
+                                                :parent-id (:parent-id obj)
+                                                :index (::index obj)
+                                                :shapes [(:id obj)]}))
+                                   []
+                                   shapes)
 
-                uchanges (conj uchanges {:type :del-obj :id id :page-id page-id})]
+                           {:type :del-obj
+                            :id (:id group)
+                            :page-id page-id})]
 
             (rx/of (dwc/commit-changes rchanges uchanges {:commit-local? true})
-                   (dws/select-shapes (d/ordered-set id)))))))))
+                   (dws/select-shapes (d/ordered-set (:id group))))))))))
 
 (def ungroup-selected
   (ptk/reify ::ungroup-selected
@@ -1371,6 +1362,61 @@
                            :index index-in-parent}]]
             (rx/of (dwc/commit-changes rchanges uchanges {:commit-local? true}))))))))
 
+(def create-component
+  (ptk/reify ::create-component
+    ptk/WatchEvent
+    (watch [_ state stream]
+      (let [page-id  (:current-page-id state)
+            objects  (dwc/lookup-page-objects state page-id)
+            selected (get-in state [:workspace-local :selected])
+            shapes   (shapes-for-grouping objects selected)]
+        (when-not (empty? shapes)
+          (let [group (if (and (= (count shapes) 1)
+                               (= (:type (first shapes)) :group))
+                        (first shapes)
+                        ;; If the shapes are not grouped, we need to group
+                        ;; them before creating the component.
+                        (make-group shapes "Component-"))
+
+                rchanges (if (= group (first shapes))
+                           []
+                           [{:type :add-obj
+                            :id (:id group)
+                            :page-id page-id
+                            :frame-id (:frame-id (first shapes))
+                            :parent-id (:parent-id (first shapes))
+                            :obj group
+                            :index (::index (first shapes))}
+                           {:type :mov-objects
+                            :page-id page-id
+                            :parent-id (:id group)
+                            :shapes (map :id shapes)}])
+
+                rchanges (conj rchanges
+                               {:type :add-component
+                                :id (:id group)
+                                :page-id page-id})
+
+                uchanges (if (= group (first shapes))
+                           []
+                           (conj
+                             (reduce (fn [res obj]
+                                       (conj res {:type :mov-objects
+                                                  :page-id page-id
+                                                  :parent-id (:parent-id obj)
+                                                  :index (::index obj)
+                                                  :shapes [(:id obj)]}))
+                                     []
+                                     shapes)
+
+                             {:type :del-obj
+                              :id (:id group)
+                              :page-id page-id}))]
+
+            (rx/of (dwc/commit-changes rchanges uchanges {:commit-local? true})
+                   (dws/select-shapes (d/ordered-set (:id group))))))))))
+
+ 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interactions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1512,6 +1558,7 @@
    "+" #(st/emit! (increase-zoom nil))
    "-" #(st/emit! (decrease-zoom nil))
    "ctrl+g" #(st/emit! group-selected)
+   "ctrl+k" #(st/emit! create-component)
    "shift+g" #(st/emit! ungroup-selected)
    "shift+0" #(st/emit! reset-zoom)
    "shift+1" #(st/emit! zoom-to-fit-all)

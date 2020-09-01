@@ -59,7 +59,8 @@
         do-lock-shape #(st/emit! (dw/update-shape-flags id {:blocked true}))
         do-unlock-shape #(st/emit! (dw/update-shape-flags id {:blocked false}))
         do-create-group #(st/emit! dw/group-selected)
-        do-remove-group #(st/emit! dw/ungroup-selected)]
+        do-remove-group #(st/emit! dw/ungroup-selected)
+        do-create-component #(st/emit! dw/create-component)]
     [:*
      [:& menu-entry {:title "Copy"
                      :shortcut "Ctrl + c"
@@ -101,13 +102,17 @@
        [:& menu-entry {:title "Hide"
                        :on-click do-hide-shape}])
 
-
-
      (if (:blocked shape)
        [:& menu-entry {:title "Unlock"
                        :on-click do-unlock-shape}]
        [:& menu-entry {:title "Lock"
                        :on-click do-lock-shape}])
+
+     [:& menu-separator]
+     [:& menu-entry {:title "Create component"
+                     :shortcut "Ctrl + K"
+                     :on-click do-create-component}]
+
      [:& menu-separator]
      [:& menu-entry {:title "Delete"
                      :shortcut "Supr"

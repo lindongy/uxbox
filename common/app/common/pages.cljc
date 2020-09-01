@@ -21,7 +21,7 @@
    [app.common.uuid :as uuid]))
 
 (def page-version 5)
-(def file-version 1)
+(def file-version 2)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Page Transformation Changes
@@ -299,6 +299,9 @@
 (defmethod change-spec :del-media [_]
   (s/keys :req-un [::id]))
 
+(defmethod change-spec :add-component [_]
+  (s/keys :req-un [::id ::page-id]))
+
 (s/def ::change (s/multi-spec change-spec :type))
 (s/def ::changes (s/coll-of ::change))
 
@@ -329,6 +332,7 @@
   {:version file-version
    :media {}
    :colors {}
+   :components {}
    :pages []
    :pages-index {}})
 
@@ -429,6 +433,18 @@
                      :height 1}
            :points []
            :segments [])))
+
+(defn make-minimal-group
+  [frame-id selection-rect prefix]
+  {:id (uuid/next)
+   :type :group
+   :name (name (gensym prefix))
+   :shapes []
+   :frame-id frame-id
+   :x (:x selection-rect)
+   :y (:y selection-rect)
+   :width (:width selection-rect)
+   :height (:height selection-rect)})
 
 (defn make-file-data
   []
@@ -691,6 +707,22 @@
 (defmethod process-change :del-media
   [data {:keys [id]}]
   (update data :media dissoc id))
+
+(defmethod process-change :add-component
+  [data {:keys [id page-id]}]
+  (let [group (get-in data [:pages-index page-id :objects id])
+        shapes (map #(get-in data [:pages-index page-id :objects %]) (:shapes group))
+
+        new-group (assoc group :id (uuid/next))
+        new-shapes (map #(assoc % :id (uuid/next)
+                                  :parent-id (:id new-group)
+                                  :frame-id nil) shapes)
+        new-group (assoc new-group :shapes
+                         (map :id new-shapes))
+
+        all-shapes (d/index-by :id (conj new-shapes new-group))]
+
+    (update data :components merge all-shapes)))
 
 (defmethod process-operation :set
   [shape op]
