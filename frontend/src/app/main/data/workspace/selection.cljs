@@ -126,7 +126,7 @@
      ptk/WatchEvent
      (watch [_ state stream]
        (let [page-id (:current-page-id state)
-             objects (cph/lookup-page-objects state page-id)]
+             objects (dwc/lookup-page-objects state page-id)]
          (rx/of (dwc/expand-all-parents [id] objects)))))))
 
 (defn select-shapes
@@ -140,7 +140,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
        (let [page-id (:current-page-id state)
-             objects (cph/lookup-page-objects state page-id)]
+             objects (dwc/lookup-page-objects state page-id)]
         (rx/of (dwc/expand-all-parents ids objects))))))
 
 (def deselect-all
@@ -175,7 +175,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             group    (get objects group-id)
             children (map #(get objects %) (:shapes group))
 
@@ -286,7 +286,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
 
             selected (get-in state [:workspace-local :selected])
             delta    (gpt/point 0 0)

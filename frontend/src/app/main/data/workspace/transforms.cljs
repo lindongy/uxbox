@@ -138,7 +138,7 @@
               stoper  (rx/filter ms/mouse-up? stream)
               layout  (:workspace-layout state)
               page-id (:current-page-id state)
-              objects (cph/lookup-page-objects state page-id)
+              objects (dwc/lookup-page-objects state page-id)
               resizing-shapes (map #(get objects %) ids)]
           (rx/concat
            (->> ms/mouse-position
@@ -240,7 +240,7 @@
      ptk/WatchEvent
      (watch [_ state stream]
        (let [page-id (:current-page-id state)
-             objects (cph/lookup-page-objects state page-id)
+             objects (dwc/lookup-page-objects state page-id)
              ids     (if (nil? ids) (get-in state [:workspace-local :selected]) ids)
              shapes  (mapv #(get objects %) ids)
              stopper (rx/filter ms/mouse-up? stream)
@@ -341,7 +341,7 @@
      ptk/UpdateEvent
      (update [_ state]
        (let [page-id (:current-page-id state)
-             objects (cph/lookup-page-objects state page-id)
+             objects (dwc/lookup-page-objects state page-id)
 
              not-frame-id?
              (fn [shape-id]

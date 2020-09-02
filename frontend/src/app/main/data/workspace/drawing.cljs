@@ -19,6 +19,7 @@
    [app.common.pages-helpers :as cph]
    [app.common.uuid :as uuid]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.common :as dwc]
    [app.main.snap :as snap]
    [app.main.streams :as ms]
    [app.util.geom.path :as path]))
@@ -97,7 +98,7 @@
 
 
               page-id (:current-page-id state)
-              objects (cph/lookup-page-objects state page-id)
+              objects (dwc/lookup-page-objects state page-id)
               layout  (get state :workspace-layout)
 
               frames  (cph/select-frames objects)

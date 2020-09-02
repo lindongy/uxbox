@@ -29,6 +29,23 @@
 (declare reset-undo)
 (declare append-undo)
 
+
+;; --- Helpers
+
+(defn lookup-page-objects
+  ([state]
+   (lookup-page-objects state (:current-page-id state)))
+  ([state page-id]
+   (get-in state [:workspace-data :pages-index page-id :objects])))
+
+(defn lookup-page-options
+  ([state]
+   (lookup-page-options state (:current-page-id state)))
+  ([state page-id]
+   (get-in state [:workspace-data :pages-index page-id :options])))
+
+
+
 ;; --- Changes Handling
 
 (defn commit-changes
@@ -125,7 +142,7 @@
   (ptk/reify ::update-indices
     ptk/EffectEvent
     (effect [_ state stream]
-      (let [objects (cph/lookup-page-objects state page-id)]
+      (let [objects (lookup-page-objects state page-id)]
         (uw/ask! {:cmd :update-page-indices
                   :page-id page-id
                   :objects objects})))))
@@ -171,7 +188,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id (get-in state [:workspace-page :id])
-            objects (cph/lookup-page-objects state page-id)
+            objects (lookup-page-objects state page-id)
 
             shapes (cph/select-toplevel-shapes objects)
             frames (cph/select-frames objects)
@@ -325,7 +342,7 @@
      ptk/WatchEvent
      (watch [_ state stream]
       (let [page-id (:current-page-id state)
-            objects (cph/lookup-page-objects state page-id)]
+            objects (lookup-page-objects state page-id)]
         (loop [ids (seq ids)
                rch []
                uch []]
@@ -395,6 +412,6 @@
       ptk/WatchEvent
       (watch [_ state stream]
         (let [page-id  (:current-page-id state)
-              objects  (cph/lookup-page-objects state page-id)
+              objects  (lookup-page-objects state page-id)
               [rchanges uchanges] (impl-gen-changes objects page-id (seq ids))]
         (rx/of (commit-changes rchanges uchanges {:commit-local? true})))))))

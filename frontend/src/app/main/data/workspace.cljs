@@ -279,7 +279,7 @@
 
           (initialize [state local]
             (let [page-id (:current-page-id state)
-                  objects (cph/lookup-page-objects state page-id)
+                  objects (dwc/lookup-page-objects state page-id)
                   shapes  (cph/select-toplevel-shapes objects {:include-frames? true})
                   srect   (geom/selection-rect shapes)
                   local   (assoc local :vport size)]
@@ -464,7 +464,7 @@
     ptk/UpdateEvent
     (update [_ state]
       (let [page-id (:current-page-id state)
-            objects (cph/lookup-page-objects state page-id)
+            objects (dwc/lookup-page-objects state page-id)
             shapes  (cph/select-toplevel-shapes objects {:include-frames? true})
             srect   (geom/selection-rect shapes)]
 
@@ -487,7 +487,7 @@
         (if (empty? selected)
           state
           (let [page-id (:current-page-id state)
-                objects (cph/lookup-page-objects state page-id)
+                objects (dwc/lookup-page-objects state page-id)
                 srect   (->> selected
                              (map #(get objects %))
                              (geom/selection-rect))]
@@ -510,7 +510,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
 
             id       (uuid/next)
             shape    (geom/setup-proportions attrs)
@@ -659,7 +659,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id (:current-page-id state)
-            objects (cph/lookup-page-objects state page-id)
+            objects (dwc/lookup-page-objects state page-id)
 
             del-change #(array-map :type :del-obj :page-id page-id :id %)
 
@@ -738,7 +738,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             selected (get-in state [:workspace-local :selected])
             rchanges (mapv (fn [id]
                              (let [obj (get objects id)
@@ -783,7 +783,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             parents  (loop [res #{parent-id}
                             ids (seq ids)]
                        (if (nil? ids)
@@ -868,7 +868,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             selected (get-in state [:workspace-local :selected])
             moved    (if (= 1 (count selected))
                        (align-object-to-frame objects (first selected) axis)
@@ -916,7 +916,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             selected (get-in state [:workspace-local :selected])
             moved    (-> (map #(get objects %) selected)
                          (geom/distribute-space axis objects))]
@@ -1043,7 +1043,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id (:current-page-id state)
-            objects (cph/lookup-page-objects state page-id)
+            objects (dwc/lookup-page-objects state page-id)
             shape   (get objects id)
             cpos    (gpt/point (:x shape) (:y shape))
             pos     (gpt/point (or (:x position) (:x shape))
@@ -1183,7 +1183,7 @@
     (ptk/reify ::copy-selected
       ptk/WatchEvent
       (watch [_ state stream]
-        (let [objects  (cph/lookup-page-objects state)
+        (let [objects  (dwc/lookup-page-objects state)
               selected (get-in state [:workspace-local :selected])
               cdata    (prepare-selected objects selected)]
           (->> (t/encode cdata)
@@ -1204,7 +1204,7 @@
             delta     (gpt/subtract mouse-pos orig-pos)
 
             page-id   (:current-page-id state)
-            unames    (-> (cph/lookup-page-objects state page-id)
+            unames    (-> (dwc/lookup-page-objects state page-id)
                           (dwc/retrieve-used-names))
 
             rchanges  (dws/prepare-duplicate-changes objects page-id unames selected delta)
@@ -1309,7 +1309,7 @@
     (watch [_ state stream]
       (let [id       (uuid/next)
             page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             selected (get-in state [:workspace-local :selected])
             items    (->> selected
                           (map #(get objects %))
@@ -1361,7 +1361,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             selected (get-in state [:workspace-local :selected])
             group-id (first selected)
             group    (get objects group-id)]
@@ -1419,7 +1419,7 @@
     ptk/UpdateEvent
     (update [_ state]
       (let [page-id (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             selected-shape-id (-> state (get-in [:workspace-local :selected]) first)
             selected-shape (get objects selected-shape-id)
             selected-shape-frame-id (:frame-id selected-shape)
@@ -1442,7 +1442,7 @@
     (watch [_ state stream]
       (let [position @ms/mouse-position
             page-id  (:current-page-id state)
-            objects  (cph/lookup-page-objects state page-id)
+            objects  (dwc/lookup-page-objects state page-id)
             frame    (dwc/get-frame-at-point objects position)
 
             shape-id (first (get-in state [:workspace-local :selected]))
@@ -1469,7 +1469,7 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [page-id (get state :current-page-id)
-            options (cph/lookup-page-options state page-id)
+            options (dwc/lookup-page-options state page-id)
             ccolor  (:background options)]
         (rx/of (dwc/commit-changes
                 [{:type :set-option
