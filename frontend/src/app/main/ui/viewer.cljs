@@ -9,25 +9,24 @@
 
 (ns app.main.ui.viewer
   (:require
-   [beicon.core :as rx]
-   [goog.events :as events]
-   [goog.object :as gobj]
-   [okulary.core :as l]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]
    [app.common.exceptions :as ex]
    [app.main.data.viewer :as dv]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
    [app.main.ui.hooks :as hooks]
+   [app.main.ui.icons :as i]
    [app.main.ui.keyboard :as kbd]
    [app.main.ui.viewer.header :refer [header]]
-   [app.main.ui.viewer.thumbnails :refer [thumbnails-panel]]
    [app.main.ui.viewer.shapes :refer [frame-svg]]
+   [app.main.ui.viewer.thumbnails :refer [thumbnails-panel]]
    [app.util.data :refer [classnames]]
    [app.util.dom :as dom]
-   [app.util.i18n :as i18n :refer [t tr]])
+   [app.util.i18n :as i18n :refer [t tr]]
+   [beicon.core :as rx]
+   [goog.events :as events]
+   [okulary.core :as l]
+   [rumext.alpha :as mf])
   (:import goog.events.EventType))
 
 (mf/defc main-panel

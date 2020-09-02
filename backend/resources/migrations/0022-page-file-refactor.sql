@@ -6,10 +6,20 @@ CREATE TABLE file_change (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   file_id uuid NOT NULL REFERENCES file(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  session_id timestamptz NULL DEFAULT NULL,
+  session_id uuid NULL DEFAULT NULL,
   revn bigint NOT NULL DEFAULT 0,
   data bytea NOT NULL,
   changes bytea NULL DEFAULT NULL
+);
+
+CREATE TABLE file_share_token (
+  file_id uuid NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  page_id uuid NOT NULL,
+  token   text NOT NULL,
+
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+
+  PRIMARY KEY (file_id, token)
 );
 
 CREATE INDEX page_change_file_id_idx

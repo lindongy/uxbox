@@ -43,7 +43,7 @@
 (declare bundle-fetched)
 
 (defn initialize
-  [{:keys [page-id file-id token] :as params}]
+  [{:keys [page-id file-id] :as params}]
   (ptk/reify ::initialize
     ptk/UpdateEvent
     (update [_ state]
@@ -99,19 +99,24 @@
   (ptk/reify ::create-share-link
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [id (get-in state [:viewer-local :page-id])]
-        (->> (rp/mutation :generate-page-share-token {:id id})
-             (rx/map (fn [{:keys [share-token]}]
-                       #(assoc-in % [:viewer-data :page :share-token] share-token))))))))
+      (let [file-id (get-in state [:viewer-local :file-id])
+            page-id (get-in state [:viewer-local :page-id])]
+        (->> (rp/mutation :create-file-share-token {:file-id file-id
+                                                    :page-id page-id})
+             (rx/map (fn [{:keys [token]}]
+                       #(assoc-in % [:viewer-data :share-token] token))))))))
 
 (def delete-share-link
   (ptk/reify ::delete-share-link
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [id (get-in state [:viewer-local :page-id])]
-        (->> (rp/mutation :clear-page-share-token {:id id})
-             (rx/map (fn [_]
-                       #(assoc-in % [:viewer-data :page :share-token] nil))))))))
+      (let [file-id (get-in state [:viewer-local :file-id])
+            page-id (get-in state [:viewer-local :page-id])
+            token   (get-in state [:viewer-data :share-token])]
+        (->> (rp/mutation :delete-file-share-token {:file-id file-id
+                                                    :page-id page-id
+                                                    :token token})
+             (rx/map (fn [_] #(update % :viewer-data dissoc :share-token))))))))
 
 ;; --- Zoom Management
 

@@ -35,6 +35,8 @@
 
 ;; --- Query: Files search
 
+;; TODO: this query need to a good refactor
+
 (def ^:private sql:search-files
   "with projects as (
      select p.*
