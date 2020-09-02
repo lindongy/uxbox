@@ -836,25 +836,18 @@
 
 (defn relocate-page
   [id index]
-  (js/alert "TODO")
-  #_(ptk/reify ::relocate-pages
-    ptk/UpdateEvent
-    (update [_ state]
-      (let [pages (get-in state [:workspace-file :pages])
-            [before after] (split-at index pages)
-            p? (partial = id)
-            pages' (d/concat []
-                             (remove p? before)
-                             [id]
-                             (remove p? after))]
-        (assoc-in state [:workspace-file :pages] pages')))
-
+  (ptk/reify ::relocate-pages
     ptk/WatchEvent
     (watch [_ state stream]
-      (let [file (:workspace-file state)]
-        (->> (rp/mutation! :reorder-pages {:page-ids (:pages file)
-                                           :file-id (:id file)})
-             (rx/ignore))))))
+      (let [cidx (-> (get-in state [:workspace-data :pages])
+                     (d/index-of id))
+            rchg {:type :mov-page
+                  :id id
+                  :index index}
+            uchg {:type :mov-page
+                  :id id
+                  :index cidx}]
+        (rx/of (dwc/commit-changes [rchg] [uchg] {:commit-local? true}))))))
 
 ;; --- Shape / Selection Alignment and Distribution
 
@@ -1256,23 +1249,6 @@
            (rx/catch (fn [err]
                        (js/console.error "Clipboard error:" err)
                        (rx/empty)))))))
-
-
-;; --- Change Page Order (D&D Ordering)
-
-(defn change-page-order
-  [{:keys [id index] :as params}]
-  {:pre [(uuid? id) (number? index)]}
-  (js/alert "TODO")
-  #_(ptk/reify ::change-page-order
-    ptk/UpdateEvent
-    (update [_ state]
-      (let [page (get-in state [:pages id])
-            pages (get-in state [:projects (:project-id page) :pages])
-            pages (into [] (remove #(= % id)) pages)
-            [before after] (split-at index pages)
-            pages (vec (concat before [id] after))]
-        (assoc-in state [:projects (:project-id page) :pages] pages)))))
 
 (defn update-shape-flags
   [id {:keys [blocked hidden] :as flags}]

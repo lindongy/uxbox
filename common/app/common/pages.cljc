@@ -229,74 +229,77 @@
           :opt-un [:internal.file/colors
                    :internal.file/media]))
 
-(defmulti operation-spec-impl :type)
+(defmulti operation-spec :type)
 
-(defmethod operation-spec-impl :set [_]
+(defmethod operation-spec :set [_]
   (s/keys :req-un [::attr ::val]))
 
-(defmulti change-spec-impl :type)
+(defmulti change-spec :type)
 
 (s/def :internal.changes.set-option/option any?)
 (s/def :internal.changes.set-option/value any?)
 
-(defmethod change-spec-impl :set-option [_]
+(defmethod change-spec :set-option [_]
   (s/keys :req-un [:internal.changes.set-option/option
                    :internal.changes.set-option/value]))
 
-(defmethod change-spec-impl :add-obj [_]
+(defmethod change-spec :add-obj [_]
   (s/keys :req-un [::id ::page-id ::frame-id ::obj]
           :opt-un [::parent-id]))
 
-(s/def ::operation (s/multi-spec operation-spec-impl :type))
+(s/def ::operation (s/multi-spec operation-spec :type))
 (s/def ::operations (s/coll-of ::operation))
 
-(defmethod change-spec-impl :mod-obj [_]
+(defmethod change-spec :mod-obj [_]
   (s/keys :req-un [::id ::page-id ::operations]))
 
-(defmethod change-spec-impl :del-obj [_]
+(defmethod change-spec :del-obj [_]
   (s/keys :req-un [::id ::page-id]))
 
 (s/def :internal.changes.reg-objects/shapes
   (s/coll-of uuid? :kind vector?))
 
-(defmethod change-spec-impl :reg-objects [_]
+(defmethod change-spec :reg-objects [_]
   (s/keys :req-un [::page-id :internal.changes.reg-objects/shapes]))
 
-(defmethod change-spec-impl :mov-objects [_]
+(defmethod change-spec :mov-objects [_]
   (s/keys :req-un [::page-id ::parent-id ::shapes]
           :opt-un [::index]))
 
-(defmethod change-spec-impl :add-page [_]
+(defmethod change-spec :add-page [_]
   (s/or :empty (s/keys :req-un [::id ::name])
         :complete (s/keys :req-un [::page])))
 
-(defmethod change-spec-impl :mod-page [_]
+(defmethod change-spec :mod-page [_]
   (s/keys :req-un [::id ::name]))
 
-(defmethod change-spec-impl :del-page [_]
+(defmethod change-spec :del-page [_]
   (s/keys :req-un [::id]))
 
-(defmethod change-spec-impl :add-color [_]
+(defmethod change-spec :mov-page [_]
+  (s/keys :req-un [::id ::index]))
+
+(defmethod change-spec :add-color [_]
   (s/keys :req-un [::color]))
 
-(defmethod change-spec-impl :mod-color [_]
+(defmethod change-spec :mod-color [_]
   (s/keys :req-un [::color]))
 
-(defmethod change-spec-impl :del-color [_]
+(defmethod change-spec :del-color [_]
   (s/keys :req-un [::id]))
 
 (s/def :internal.changes.media/object ::media-object)
 
-(defmethod change-spec-impl :add-media [_]
+(defmethod change-spec :add-media [_]
   (s/keys :req-un [:internal.changes.media/object]))
 
-(defmethod change-spec-impl :mod-media [_]
+(defmethod change-spec :mod-media [_]
   (s/keys :req-un [:internal.changes.media/object]))
 
-(defmethod change-spec-impl :del-media [_]
+(defmethod change-spec :del-media [_]
   (s/keys :req-un [::id]))
 
-(s/def ::change (s/multi-spec change-spec-impl :type))
+(s/def ::change (s/multi-spec change-spec :type))
 (s/def ::changes (s/coll-of ::change))
 
 (def root uuid/zero)
@@ -661,6 +664,10 @@
       (update :pages (fn [pages] (filterv #(not= % id) pages)))
       (update :pages-index dissoc id)))
 
+(defmethod process-change :mov-page
+  [data {:keys [id index]}]
+  (update data :pages cph/insert-at-index index [id]))
+
 (defmethod process-change :add-color
   [data {:keys [color]}]
   (update data :colors assoc (:id color) color))
@@ -685,8 +692,6 @@
   [data {:keys [id]}]
   (update data :media dissoc id))
 
-
-
 (defmethod process-operation :set
   [shape op]
   (let [attr (:attr op)
@@ -700,9 +705,3 @@
   (ex/raise :type :not-implemented
             :code :operation-not-implemented
             :context {:type (:type op)}))
-
-
-;; (defn testfn [a b c] (+ a b c))
-;; (simple-benchmark [xfn #(testfn 1 2 %)] (xfn 3) 100000000)
-;; (simple-benchmark [xfn (partial testfn 1 2)] (xfn 3) 100000000)
-

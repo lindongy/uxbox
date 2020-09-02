@@ -126,6 +126,7 @@
           (assign-session [sessions {:keys [id profile]}]
             (let [session {:id id
                            :fullname (:fullname profile)
+                           :updated-at (dt/now)
                            :photo-uri (or (:photo-uri profile)
                                           (avatars/generate {:name (:fullname profile)}))}
                   session (assign-color sessions session)]

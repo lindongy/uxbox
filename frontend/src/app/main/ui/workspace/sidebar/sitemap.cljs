@@ -2,26 +2,28 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2015-2019 Andrey Antukh <niwi@niwi.nz>
-;; Copyright (c) 2015-2016 Juan de la Cruz <delacruzgarciajuan@gmail.com>
+;; This Source Code Form is "Incompatible With Secondary Licenses", as
+;; defined by the Mozilla Public License, v. 2.0.
+;;
+;; Copyright (c) 2020 UXBOX Labs SL
 
 (ns app.main.ui.workspace.sidebar.sitemap
   (:require
-   [cuerdas.core :as str]
-   [okulary.core :as l]
-   [rumext.alpha :as mf]
    [app.common.data :as d]
-   [app.main.ui.icons :as i]
    [app.main.data.workspace :as dw]
-   [app.main.store :as st]
    [app.main.refs :as refs]
+   [app.main.store :as st]
    [app.main.ui.confirm :refer [confirm-dialog]]
+   [app.main.ui.hooks :as hooks]
+   [app.main.ui.icons :as i]
    [app.main.ui.keyboard :as kbd]
    [app.main.ui.modal :as modal]
-   [app.main.ui.hooks :as hooks]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [t]]
-   [app.util.router :as rt]))
+   [app.util.router :as rt]
+   [cuerdas.core :as str]
+   [okulary.core :as l]
+   [rumext.alpha :as mf]))
 
 ;; --- Page Item
 
@@ -34,8 +36,6 @@
         delete-fn   (mf/use-callback (mf/deps id) #(st/emit! (dw/delete-page id)))
         on-delete   (mf/use-callback (mf/deps id) #(modal/show! confirm-dialog {:on-accept delete-fn}))
         navigate-fn (mf/use-callback (mf/deps id) #(st/emit! (dw/go-to-page id)))
-
-
 
         on-double-click
         (mf/use-callback
