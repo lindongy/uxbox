@@ -499,7 +499,7 @@
       (when tooltip
         [:& cursor-tooltip {:zoom zoom :tooltip tooltip}])]
 
-     [:& presence/active-cursors {:page page}]
+     [:& presence/active-cursors {:page-id page-id}]
      [:& selection-rect {:data (:selrect local)}]
      (when (= options-mode :prototype)
        [:& interactions {:selected selected}])]))

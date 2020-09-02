@@ -122,7 +122,7 @@
 
 (defn update-indices
   [page-id]
-  (ptk/reify ::update-page-indices
+  (ptk/reify ::update-indices
     ptk/EffectEvent
     (effect [_ state stream]
       (let [objects (cph/lookup-page-objects state page-id)]
