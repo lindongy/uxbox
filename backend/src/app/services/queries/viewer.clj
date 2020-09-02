@@ -19,7 +19,7 @@
 ;; --- Query: Viewer Bundle (by Page ID)
 
 (declare check-shared-token!)
-(declare retrieve-shared-tokens)
+(declare retrieve-shared-token)
 
 (def ^:private
   sql:project
