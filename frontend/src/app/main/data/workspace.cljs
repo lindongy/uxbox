@@ -1376,7 +1376,9 @@
                         (first shapes)
                         ;; If the shapes are not grouped, we need to group
                         ;; them before creating the component.
-                        (make-group shapes "Component-"))
+                        (make-group shapes (if (= (count shapes) 1)
+                                             (:name (first shapes))
+                                             "Component-")))
 
                 rchanges (if (= group (first shapes))
                            []
@@ -1415,6 +1417,18 @@
 
             (rx/of (dwc/commit-changes rchanges uchanges {:commit-local? true})
                    (dws/select-shapes (d/ordered-set (:id group))))))))))
+
+(defn delete-component
+  [{:keys [id] :as component}]
+  (ptk/reify ::delete-component
+    ptk/WatchEvent
+    (watch [_ state stream]
+      (let [rchanges [{:type :del-component
+                       :id id}]
+
+            uchanges []]
+
+        (rx/of (dwc/commit-changes rchanges uchanges {:commit-local? true}))))))
 
  
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

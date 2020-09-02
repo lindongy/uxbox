@@ -302,6 +302,9 @@
 (defmethod change-spec :add-component [_]
   (s/keys :req-un [::id ::page-id]))
 
+(defmethod change-spec :del-component [_]
+  (s/keys :req-un [::id]))
+
 (s/def ::change (s/multi-spec change-spec :type))
 (s/def ::changes (s/coll-of ::change))
 
@@ -708,21 +711,45 @@
   [data {:keys [id]}]
   (update data :media dissoc id))
 
+(defn- clone-shape
+  [id parent-id objects]
+  (let [shape (get objects id)
+        new-id (uuid/next)]
+    (if (nil? (:shapes shape))
+
+      (let [new-shape (assoc shape
+                             :id new-id
+                             :parent-id parent-id
+                             :frame-id nil)]
+        {:new-shape new-shape
+         :new-objects [new-shape]})
+
+      (let [cloned-children (map #(clone-shape % new-id objects)
+                                 (:shapes shape))
+            child-ids (map #(:id (:new-shape %)) cloned-children)
+            new-objects (reduce #(concat %1 (:new-objects %2)) [] cloned-children)
+
+            new-shape (assoc shape
+                             :id new-id
+                             :parent-id parent-id
+                             :frame-id nil
+                             :shapes child-ids)]
+        {:new-shape new-shape
+         :new-objects (conj new-objects new-shape)}))))
+
 (defmethod process-change :add-component
   [data {:keys [id page-id]}]
-  (let [group (get-in data [:pages-index page-id :objects id])
-        shapes (map #(get-in data [:pages-index page-id :objects %]) (:shapes group))
+  (let [objects (get-in data [:pages-index page-id :objects])
+        cloned-shape (clone-shape id nil objects)
+        new-objects (d/index-by :id (:new-objects cloned-shape))]
+    (-> data
+        (update :components merge new-objects)
+        (d/update-in-when [:pages-index page-id :objects id]
+                          #(assoc % :component-id (:id (:new-shape cloned-shape)))))))
 
-        new-group (assoc group :id (uuid/next))
-        new-shapes (map #(assoc % :id (uuid/next)
-                                  :parent-id (:id new-group)
-                                  :frame-id nil) shapes)
-        new-group (assoc new-group :shapes
-                         (map :id new-shapes))
-
-        all-shapes (d/index-by :id (conj new-shapes new-group))]
-
-    (update data :components merge all-shapes)))
+(defmethod process-change :del-component
+  [data {:keys [id]}]
+  (update data :components dissoc id))
 
 (defmethod process-operation :set
   [shape op]
