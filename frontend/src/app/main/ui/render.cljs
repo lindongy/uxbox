@@ -86,7 +86,7 @@
           srect    (geom/selection-rect shapes)
           object   (merge object (select-keys srect [:x :y :width :height]))
           object   (geom/transform-shape object)
-          object   (assoc object :fill-color "transparent")]
+          object   (assoc object :fill-color "#f0f0f0")]
       (assoc objects (:id object) object))
     objects))
 

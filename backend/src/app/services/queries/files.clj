@@ -171,6 +171,15 @@
     (check-edition-permissions! conn profile-id id)
     (retrieve-file conn id)))
 
+(s/def ::page
+  (s/keys :req-un [::profile-id ::id ::file-id]))
+
+(sq/defquery ::page
+  [{:keys [profile-id file-id id]}]
+  (db/with-atomic [conn db/pool]
+    (check-edition-permissions! conn profile-id file-id)
+    (let [file (retrieve-file conn file-id)]
+      (get-in file [:data :pages-index id]))))
 
 ;; --- Query: File users
 

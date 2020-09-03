@@ -13,8 +13,8 @@
   (:import
    goog.Uri))
 
-(defn- screenshot-object
-  [browser {:keys [file-id page-id object-id token scale suffix type]}]
+(defn screenshot-object
+  [browser {:keys [file-id page-id object-id token scale type]}]
   (letfn [(handle [page]
             (let [path   (str "/render-object/" file-id "/" page-id "/" object-id)
                   uri    (doto (Uri. (:public-uri cfg/config))

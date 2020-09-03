@@ -1,22 +1,34 @@
+;; This Source Code Form is subject to the terms of the Mozilla Public
+;; License, v. 2.0. If a copy of the MPL was not distributed with this
+;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+;;
+;; This Source Code Form is "Incompatible With Secondary Licenses", as
+;; defined by the Mozilla Public License, v. 2.0.
+;;
+;; Copyright (c) 2020 UXBOX Labs SL
+
 (ns app.main.ui.dashboard.grid
   (:require
-   [cuerdas.core :as str]
-   [beicon.core :as rx]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]
+   [app.common.uuid :as uuid]
+   [app.config :as cfg]
    [app.main.data.dashboard :as dsh]
-   [app.main.store :as st]
-   [app.main.ui.modal :as modal]
-   [app.main.ui.keyboard :as kbd]
-   [app.main.ui.confirm :refer [confirm-dialog]]
-   [app.main.ui.components.context-menu :refer [context-menu]]
-   [app.main.worker :as wrk]
    [app.main.fonts :as fonts]
+   [app.main.store :as st]
+   [app.main.ui.components.context-menu :refer [context-menu]]
+   [app.main.ui.confirm :refer [confirm-dialog]]
+   [app.main.ui.icons :as i]
+   [app.main.ui.keyboard :as kbd]
+   [app.main.ui.modal :as modal]
+   [app.main.worker :as wrk]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [t tr]]
    [app.util.router :as rt]
+   [app.util.time :as dt]
    [app.util.timers :as ts]
-   [app.util.time :as dt]))
+   [beicon.core :as rx]
+   [cuerdas.core :as str]
+   [lambdaisland.uri :as uri]
+   [rumext.alpha :as mf]))
 
 ;; --- Grid Item Thumbnail
 
@@ -28,7 +40,8 @@
      (mf/deps (:id file))
      (fn []
        (->> (wrk/ask! {:cmd :thumbnails/generate
-                       :id (first (:pages file))})
+                       :file-id (:id file)
+                       :page-id (get-in file [:data :pages 0])})
             (rx/subs (fn [{:keys [svg fonts]}]
                        (run! fonts/ensure-loaded! fonts)
                        (when-let [node (mf/ref-val container)]
