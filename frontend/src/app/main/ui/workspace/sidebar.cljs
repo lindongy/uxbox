@@ -42,10 +42,10 @@
 ;; TODO: revisit page prop
 
 (mf/defc right-sidebar
-  [{:keys [layout page-id local] :as props}]
+  [{:keys [layout page-id file-id local] :as props}]
   [:aside#settings-bar.settings-bar
    [:div.settings-bar-inside
     (when (contains? layout :element-options)
-      [:& options-toolbox
-       {:page {:id page-id}
+      [:& options-toolbox {:page-id page-id
+        :file-id file-id
         :local local}])]])

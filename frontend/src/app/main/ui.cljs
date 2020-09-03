@@ -58,7 +58,7 @@
      ["/debug/icons-preview" :debug-icons-preview])
 
    ;; Used for export
-   ["/render-object/:page-id/:object-id" :render-object]
+   ["/render-object/:file-id/:page-id/:object-id" :render-object]
 
    ["/dashboard"
     ["/team/:team-id"
@@ -122,9 +122,11 @@
 
     :render-object
     (do
-      (let [page-id (uuid (get-in route [:params :path :page-id]))
-            object-id  (uuid (get-in route [:params :path :object-id]))]
-        [:& render/render-object {:page-id page-id
+      (let [file-id   (uuid (get-in route [:params :path :file-id]))
+            page-id   (uuid (get-in route [:params :path :page-id]))
+            object-id (uuid (get-in route [:params :path :object-id]))]
+        [:& render/render-object {:file-id file-id
+                                  :page-id page-id
                                   :object-id object-id}]))
 
     :workspace

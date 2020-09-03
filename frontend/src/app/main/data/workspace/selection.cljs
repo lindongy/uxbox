@@ -293,7 +293,7 @@
             unames   (retrieve-used-names objects)
 
             rchanges (prepare-duplicate-changes objects page-id unames selected delta)
-            uchanges (mapv #(array-map :type :del-obj :id (:id %))
+            uchanges (mapv #(array-map :type :del-obj :page-id page-id :id (:id %))
                            (reverse rchanges))
 
             selected (->> rchanges

@@ -12,6 +12,7 @@
 
 (s/def ::name ::us/string)
 (s/def ::page-id ::us/uuid)
+(s/def ::file-id ::us/uuid)
 (s/def ::object-id ::us/uuid)
 (s/def ::scale ::us/number)
 (s/def ::suffix ::us/string)
@@ -23,7 +24,7 @@
 (s/def ::exports (s/coll-of ::export :kind vector?))
 
 (s/def ::handler-params
-  (s/keys :req-un [::page-id ::object-id ::name ::exports]))
+  (s/keys :req-un [::page-id ::file-id ::object-id ::name ::exports]))
 
 (declare handle-single-export)
 (declare handle-multiple-export)
@@ -32,7 +33,7 @@
 
 (defn export-handler
   [{:keys [params browser cookies] :as request}]
-  (let [{:keys [exports page-id object-id name]} (us/conform ::handler-params params)
+  (let [{:keys [exports page-id file-id object-id name]} (us/conform ::handler-params params)
         token  (.get ^js cookies "auth-token")]
     (case (count exports)
       0 (exc/raise :type :validation :code :missing-exports)
@@ -41,6 +42,7 @@
          (assoc (first exports)
                 :name name
                 :token token
+                :file-id file-id
                 :page-id page-id
                 :object-id object-id))
       (handle-multiple-export
@@ -49,6 +51,7 @@
               (assoc item
                      :name name
                      :token token
+                     :file-id file-id
                      :page-id page-id
                      :object-id object-id)) exports)))))
 

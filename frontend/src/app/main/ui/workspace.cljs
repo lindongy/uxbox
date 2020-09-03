@@ -81,6 +81,7 @@
      (when right-sidebar?
        [:& right-sidebar
         {:page-id page-id
+         :file-id (:id file)
          :local local
          :layout layout}])]))
 
