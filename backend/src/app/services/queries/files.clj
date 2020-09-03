@@ -264,10 +264,10 @@
 
 (defn retrieve-file-library
   [conn file-id]
-  (let [row (db/exec-one! conn [sql:file-library file-id])]
-    (when-not row
+  (let [rows (db/exec! conn [sql:file-library file-id])]
+    (when-not (seq rows)
       (ex/raise :type :not-found))
-    row))
+    (first (sequence decode-row-xf rows))))
 
 (s/def ::file-library
   (s/keys :req-un [::profile-id ::file-id]))
