@@ -605,7 +605,7 @@
                   obj  (get objects id)]
               (cond-> objects
                 (not= :frame (:type obj))
-                (as-> $$ (reduce update-frame-ids $$ (:shapes obj))))))
+                (as-> $$ (reduce (partial update-frame-ids frame-id) $$ (:shapes obj))))))
 
           (move-objects [objects]
             (let [valid?  (every? (partial is-valid-move? objects) shapes)

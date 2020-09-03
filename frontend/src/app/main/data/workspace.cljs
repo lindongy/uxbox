@@ -1351,17 +1351,21 @@
                                      (filter #(#{group-id} (second %)))
                                      (ffirst))
                 rchanges [{:type :mov-objects
+                           :page-id page-id
                            :parent-id parent-id
                            :shapes shapes
                            :index index-in-parent}]
                 uchanges [{:type :add-obj
+                           :page-id page-id
                            :id group-id
                            :frame-id (:frame-id group)
                            :obj (assoc group :shapes [])}
                           {:type :mov-objects
+                           :page-id page-id
                            :parent-id group-id
                            :shapes shapes}
                           {:type :mov-objects
+                           :page-id page-id
                            :parent-id parent-id
                            :shapes [group-id]
                            :index index-in-parent}]]
