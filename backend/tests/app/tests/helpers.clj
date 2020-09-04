@@ -89,9 +89,17 @@
 
 (defn create-team
   [conn profile-id i]
-  (#'teams/create-team conn {:id (mk-uuid "team" i)
-                             :profile-id profile-id
-                             :name (str "team" i)}))
+  (let [id (mk-uuid "team" i)
+        team (#'teams/create-team conn {:id id
+                                        :profile-id profile-id
+                                        :name (str "team" i)})]
+    (#'teams/create-team-profile conn
+                                 {:team-id id
+                                  :profile-id profile-id
+                                  :is-owner true
+                                  :is-admin true
+                                  :can-edit true})
+    team))
 
 (defn create-project
   [conn profile-id team-id i]
