@@ -191,6 +191,8 @@
                    :internal.color/name
                    :internal.color/value]))
 
+(s/def :recent-color/color ::us/string)
+
 (s/def :internal.media-object/name ::us/string)
 (s/def :internal.media-object/path ::us/string)
 (s/def :internal.media-object/width ::us/integer)
@@ -214,6 +216,9 @@
 (s/def :internal.file/colors
   (s/map-of ::us/uuid ::color))
 
+(s/def :internal.file/recent-colors
+  (s/coll-of ::us/string :kind vector?))
+
 (s/def :internal.file/pages
   (s/coll-of ::us/uuid :kind vector?))
 
@@ -227,6 +232,7 @@
   (s/keys :req-un [:internal.file/pages-index
                    :internal.file/pages]
           :opt-un [:internal.file/colors
+                   :internal.file/recent-colors
                    :internal.file/media]))
 
 (defmulti operation-spec :type)
@@ -287,6 +293,9 @@
 
 (defmethod change-spec :del-color [_]
   (s/keys :req-un [::id]))
+
+(defmethod change-spec :add-recent-color [_]
+  (s/keys :req-un [:recent-color/color]))
 
 (s/def :internal.changes.media/object ::media-object)
 
@@ -679,6 +688,15 @@
 (defmethod process-change :del-color
   [data {:keys [id]}]
   (update data :colors dissoc id))
+
+(defmethod process-change :add-recent-color
+  [data {:keys [color]}]
+  ;; Moves the color to the top of the list and then truncates up to 15
+  (update data :recent-colors (fn [rc]
+                                (let [rc (conj (filterv (comp not #{color}) (or rc [])) color)]
+                                  (if (> (count rc) 15)
+                                    (subvec rc 1)
+                                    rc)))))
 
 (defmethod process-change :add-media
   [data {:keys [object]}]
