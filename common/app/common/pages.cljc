@@ -431,14 +431,15 @@
            :segments [])))
 
 (defn make-file-data
-  []
-  (let [id (uuid/next)
-        pd (assoc empty-page-data
-                  :id id
-                  :name "Page-1")]
-    (-> empty-file-data
-        (update :pages conj id)
-        (update :pages-index assoc id pd))))
+  ([] (make-file-data (uuid/next)))
+  ([id]
+   (let [
+         pd (assoc empty-page-data
+                   :id id
+                   :name "Page-1")]
+     (-> empty-file-data
+         (update :pages conj id)
+         (update :pages-index assoc id pd)))))
 
 ;; --- Changes Processing Impl
 
@@ -601,8 +602,8 @@
 
           ;; Updates the frame-id references that might be outdated
           (update-frame-ids [frame-id objects id]
-            (let [data (assoc-in objects [id :frame-id] frame-id)
-                  obj  (get objects id)]
+            (let [objects (assoc-in objects [id :frame-id] frame-id)
+                  obj     (get objects id)]
               (cond-> objects
                 (not= :frame (:type obj))
                 (as-> $$ (reduce (partial update-frame-ids frame-id) $$ (:shapes obj))))))
