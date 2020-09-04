@@ -12,6 +12,7 @@
    [mount.core :as mount :refer [defstate]]
    [app.db :as db]
    [app.config :as cfg]
+   [app.migrations.migration-0023 :as mg0023]
    [app.util.migrations :as mg]))
 
 (def +migrations+
@@ -104,6 +105,11 @@
     {:desc "Refactor pages and files"
      :name "0022-page-file-refactor"
      :fn (mg/resource "migrations/0022-page-file-refactor.sql")}
+
+
+    {:desc "Adapt old pages and files to new format"
+     :name "0023-adapt-old-pages-and-files"
+     :fn mg0023/migrate}
     ]})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

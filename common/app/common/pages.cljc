@@ -29,35 +29,31 @@
 
 ;; --- Specs
 
-(s/def ::id uuid?)
-(s/def ::shape-id uuid?)
-(s/def ::session-id uuid?)
-(s/def ::name string?)
-(s/def ::parent-id uuid?)
-(s/def ::ids (s/coll-of ::us/uuid))
-(s/def ::attr keyword?)
-(s/def ::val any?)
 (s/def ::frame-id uuid?)
+(s/def ::id uuid?)
+(s/def ::integer integer?)
+(s/def ::name string?)
+(s/def ::page-id uuid?)
+(s/def ::parent-id uuid?)
+(s/def ::string string?)
 (s/def ::type keyword?)
+(s/def ::uuid uuid?)
 
 ;; Page Options
 
-;; TODO: revisit (this is still valid spec?)
 
-(s/def :internal.page.options/grid-x number?)
-(s/def :internal.page.options/grid-y number?)
-(s/def :internal.page.options/grid-color string?)
+;; TODO: missing specs for :saved-grids
+
+(s/def :internal.page.options/background string?)
 
 (s/def :internal.page/options
-  (s/keys :opt-un [:internal.page.options/grid-x
-                   :internal.page.options/grid-y
-                   :internal.page.options/grid-color]))
+  (s/keys :opt-un [:internal.page.options/background]))
 
 ;; Interactions
 
 (s/def :internal.shape.interaction/event-type #{:click}) ; In the future we will have more options
 (s/def :internal.shape.interaction/action-type #{:navigate})
-(s/def :internal.shape.interaction/destination ::us/uuid)
+(s/def :internal.shape.interaction/destination ::uuid)
 
 (s/def :internal.shape/interaction
   (s/keys :req-un [:internal.shape.interaction/event-type
@@ -183,23 +179,23 @@
                    :internal.page/options
                    :internal.page/objects]))
 
-(s/def :internal.color/name ::us/string)
-(s/def :internal.color/value ::us/string)
+(s/def :internal.color/name ::string)
+(s/def :internal.color/value ::string)
 
 (s/def ::color
   (s/keys :req-un [::id
                    :internal.color/name
                    :internal.color/value]))
 
-(s/def :internal.media-object/name ::us/string)
-(s/def :internal.media-object/path ::us/string)
-(s/def :internal.media-object/width ::us/integer)
-(s/def :internal.media-object/height ::us/integer)
-(s/def :internal.media-object/mtype ::us/string)
-(s/def :internal.media-object/thumb-path ::us/string)
-(s/def :internal.media-object/thumb-width ::us/integer)
-(s/def :internal.media-object/thumb-height ::us/integer)
-(s/def :internal.media-object/thumb-mtype ::us/string)
+(s/def :internal.media-object/name ::string)
+(s/def :internal.media-object/path ::string)
+(s/def :internal.media-object/width ::integer)
+(s/def :internal.media-object/height ::integer)
+(s/def :internal.media-object/mtype ::string)
+(s/def :internal.media-object/thumb-path ::string)
+(s/def :internal.media-object/thumb-width ::integer)
+(s/def :internal.media-object/thumb-height ::integer)
+(s/def :internal.media-object/thumb-mtype ::string)
 
 (s/def ::media-object
   (s/keys :req-un [::id ::name
@@ -212,16 +208,16 @@
 
 
 (s/def :internal.file/colors
-  (s/map-of ::us/uuid ::color))
+  (s/map-of ::uuid ::color))
 
 (s/def :internal.file/pages
-  (s/coll-of ::us/uuid :kind vector?))
+  (s/coll-of ::uuid :kind vector?))
 
 (s/def :internal.file/media
-  (s/map-of ::us/uuid ::media-object))
+  (s/map-of ::uuid ::media-object))
 
 (s/def :internal.file/pages-index
-  (s/map-of ::us/uuid ::page))
+  (s/map-of ::uuid ::page))
 
 (s/def ::data
   (s/keys :req-un [:internal.file/pages-index
@@ -231,8 +227,12 @@
 
 (defmulti operation-spec :type)
 
+(s/def :internal.operations.set/attr keyword?)
+(s/def :internal.operations.set/val any?)
+
 (defmethod operation-spec :set [_]
-  (s/keys :req-un [::attr ::val]))
+  (s/keys :req-un [:internal.operations.set/attr
+                   :internal.operations.set/val]))
 
 (defmulti change-spec :type)
 
@@ -243,8 +243,11 @@
   (s/keys :req-un [:internal.changes.set-option/option
                    :internal.changes.set-option/value]))
 
+(s/def :internal.changes.add-obj/obj ::shape)
+
 (defmethod change-spec :add-obj [_]
-  (s/keys :req-un [::id ::page-id ::frame-id ::obj]
+  (s/keys :req-un [::id ::page-id ::frame-id
+                   :internal.changes.add-obj/obj]
           :opt-un [::parent-id]))
 
 (s/def ::operation (s/multi-spec operation-spec :type))
@@ -304,18 +307,6 @@
 
 (def root uuid/zero)
 
-;; TODO: pending to be removed
-(def default-page-data
-  "A reference value of the empty page data."
-  {:version page-version
-   :options {}
-   :objects
-   {root
-    {:id root
-     :type :frame
-     :name "root"
-     :shapes []}}})
-
 (def empty-page-data
   {:options {}
    :name "Page"
@@ -327,8 +318,6 @@
 
 (def empty-file-data
   {:version file-version
-   :media {}
-   :colors {}
    :pages []
    :pages-index {}})
 
