@@ -59,5 +59,6 @@
   (let [files (retrieve-files conn)]
     (doseq [file files]
       (when (nil? (:data file))
-        (migrate-file conn file)))))
+        (migrate-file conn file)))
+    (db/exec-one! conn ["drop table page cascade;"])))
 
