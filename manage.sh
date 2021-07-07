@@ -1,120 +1,198 @@
 #!/usr/bin/env bash
 set -e
 
-REV=`git log -n 1 --pretty=format:%h -- docker/`
-DEVENV_IMGNAME="uxbox-devenv"
+export ORGANIZATION="penpotapp";
+export DEVENV_IMGNAME="$ORGANIZATION/devenv";
+export DEVENV_PNAME="penpotdev";
 
-function build-devenv {
-    echo "Building development image $DEVENV_IMGNAME:latest with UID $EXTERNAL_UID..."
+export CURRENT_USER_ID=$(id -u);
+export CURRENT_VERSION=$(cat ./version.txt);
+export CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD);
+export CURRENT_HASH=$(git rev-parse --short HEAD);
+export CURRENT_COMMITS=$(git rev-list --count HEAD)
 
-    local EXTERNAL_UID=${1:-$(id -u)}
-
-    docker build --rm=true --force-rm \
-           -t $DEVENV_IMGNAME:latest \
-           --build-arg EXTERNAL_UID=$EXTERNAL_UID \
-           docker/devenv/;
+function print-current-version {
+    if [ $CURRENT_BRANCH != "main" ]; then
+        echo -n "$CURRENT_BRANCH-$CURRENT_VERSION-$CURRENT_COMMITS-g$CURRENT_HASH"
+    else
+        echo -n "$CURRENT_VERSION-$CURRENT_COMMITS-g$CURRENT_HASH"
+    fi
 }
 
-function build-devenv-if-not-exists {
+function build-devenv {
+    echo "Building development image $DEVENV_IMGNAME:latest..."
+
+    pushd docker/devenv;
+    docker build -t $DEVENV_IMGNAME:latest .
+    popd;
+}
+
+function push-devenv {
+    docker push $DEVENV_IMGNAME:latest
+}
+
+function pull-devenv {
+    set -ex
+    docker pull $DEVENV_IMGNAME:latest
+}
+
+function pull-devenv-if-not-exists {
     if [[ ! $(docker images $DEVENV_IMGNAME:latest -q) ]]; then
-        build-devenv $@
+        pull-devenv $@
     fi
 }
 
 function start-devenv {
-    build-devenv-if-not-exists $@;
-    docker-compose -p uxboxdev -f docker/devenv/docker-compose.yaml up -d;
+    pull-devenv-if-not-exists $@;
+    docker-compose -p $DEVENV_PNAME -f docker/devenv/docker-compose.yaml up -d;
 }
 
 function stop-devenv {
-    docker-compose -p uxboxdev -f docker/devenv/docker-compose.yaml stop -t 2;
+    docker-compose -p $DEVENV_PNAME -f docker/devenv/docker-compose.yaml stop -t 2;
 }
 
 function drop-devenv {
-    docker-compose -p uxboxdev -f docker/devenv/docker-compose.yaml down -t 2 -v;
+    docker-compose -p $DEVENV_PNAME -f docker/devenv/docker-compose.yaml down -t 2 -v;
 
     echo "Clean old development image $DEVENV_IMGNAME..."
     docker images $DEVENV_IMGNAME -q | awk '{print $3}' | xargs --no-run-if-empty docker rmi
 }
 
+function log-devenv {
+    docker-compose -p $DEVENV_PNAME -f docker/devenv/docker-compose.yaml logs -f --tail=50
+}
+
 function run-devenv {
-    if [[ ! $(docker ps -f "name=uxbox-devenv-main" -q) ]]; then
+    if [[ ! $(docker ps -f "name=penpot-devenv-main" -q) ]]; then
         start-devenv
     fi
 
-    docker exec -ti uxbox-devenv-main /home/uxbox/start-tmux.sh
+    docker exec -ti penpot-devenv-main sudo -EH -u penpot /home/start-tmux.sh
 }
 
-function build-frontend {
-    build-devenv-if-not-exists;
+function build {
+    echo ">> build start: $1"
+    local version=$(print-current-version);
 
-    local IMAGE=$DEVENV_IMGNAME:latest;
-
-    echo "Running development image $IMAGE to build frontend."
+    pull-devenv-if-not-exists;
+    docker volume create ${DEVENV_PNAME}_user_data;
     docker run -t --rm \
-           --mount source=`pwd`,type=bind,target=/home/uxbox/uxbox \
-           --mount source=${HOME}/.m2,type=bind,target=/home/uxbox/.m2 \
-           -w /home/uxbox/uxbox/frontend \
-           $IMAGE ./scripts/build-app.sh
+           --mount source=${DEVENV_PNAME}_user_data,type=volume,target=/home/penpot/ \
+           --mount source=`pwd`,type=bind,target=/home/penpot/penpot \
+           -e EXTERNAL_UID=$CURRENT_USER_ID \
+           -e SHADOWCLJS_EXTRA_PARAMS=$SHADOWCLJS_EXTRA_PARAMS \
+           -w /home/penpot/penpot/$1 \
+           $DEVENV_IMGNAME:latest sudo -EH -u penpot ./scripts/build $version
+
+    echo ">> build end: $1"
 }
 
-function build-exporter {
-    build-devenv-if-not-exists;
+function put-license-file {
+    local target=$1;
+    tee -a $target/LICENSE  >> /dev/null <<EOF
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-    local IMAGE=$DEVENV_IMGNAME:latest;
-
-    echo "Running development image $IMAGE to build frontend."
-    docker run -t --rm \
-           --mount source=`pwd`,type=bind,target=/home/uxbox/uxbox \
-           --mount source=${HOME}/.m2,type=bind,target=/home/uxbox/.m2 \
-           -w /home/uxbox/uxbox/exporter \
-           $IMAGE ./scripts/build.sh
+Copyright (c) UXBOX Labs SL
+EOF
 }
 
-function build-backend {
-    rm -rf ./backend/target/dist
-    mkdir -p ./backend/target/dist
+function build-frontend-bundle {
+    echo ">> bundle frontend start";
 
-    rsync -ar \
-          --exclude="/tests*" \
-          --exclude="/resources/public/media" \
-          --exclude="/file-uploads" \
-          --exclude="/target" \
-          --exclude="/scripts" \
-          --exclude="/.*" \
-          ./backend/ ./backend/target/dist/
+    local version=$(print-current-version);
+    local bundle_dir="./bundle-frontend";
 
-    rsync -ar \
-          ./common/ ./backend/target/dist/common/
+    build "frontend";
+
+    rm -rf $bundle_dir;
+    mv ./frontend/target/dist $bundle_dir;
+    echo $version > $bundle_dir/version.txt;
+    put-license-file $bundle_dir;
+    echo ">> bundle frontend end";
 }
 
-function log-devenv {
-    docker-compose -p uxboxdev -f docker/devenv/docker-compose.yaml logs -f --tail=50
+function build-backend-bundle {
+    echo ">> bundle backend start";
+
+    local version=$(print-current-version);
+    local bundle_dir="./bundle-backend";
+
+    build "backend";
+
+    rm -rf $bundle_dir;
+    mv ./backend/target/dist $bundle_dir;
+    echo $version > $bundle_dir/version.txt;
+    put-license-file $bundle_dir;
+    echo ">> bundle frontend end";
+}
+
+function build-exporter-bundle {
+    echo ">> bundle exporter start";
+    local version=$(print-current-version);
+    local bundle_dir="./bundle-exporter";
+
+    build "exporter";
+
+    rm -rf $bundle_dir;
+    mv ./exporter/target $bundle_dir;
+
+    echo $version > $bundle_dir/version.txt
+    put-license-file $bundle_dir;
+
+    echo ">> bundle exporter end";
+}
+
+# DEPRECATED: temporary mantained for backward compatibilty.
+
+function build-app-bundle {
+    echo ">> bundle app start";
+
+    local version=$(print-current-version);
+    local bundle_dir="./bundle-app";
+
+    build "frontend";
+    build "backend";
+
+    rm -rf $bundle_dir
+    mkdir -p $bundle_dir;
+    mv ./frontend/target/dist $bundle_dir/frontend;
+    mv ./backend/target/dist $bundle_dir/backend;
+
+    echo $version > $bundle_dir/version.txt
+    put-license-file $bundle_dir;
+    echo ">> bundle app end";
 }
 
 function usage {
-    echo "UXBOX build & release manager v$REV"
+    echo "PENPOT build & release manager"
     echo "USAGE: $0 OPTION"
     echo "Options:"
-    # echo "- clean                            Stop and clean up docker containers"
-    # echo ""
-    echo "- build-devenv                     Build docker development oriented image; (can specify external user id in parameter)"
+    echo "- pull-devenv                      Pulls docker development oriented image"
+    echo "- build-devenv                     Build docker development oriented image"
     echo "- start-devenv                     Start the development oriented docker-compose service."
     echo "- stop-devenv                      Stops the development oriented docker-compose service."
     echo "- drop-devenv                      Remove the development oriented docker-compose containers, volumes and clean images."
     echo "- run-devenv                       Attaches to the running devenv container and starts development environment"
     echo "                                   based on tmux (frontend at localhost:3449, backend at localhost:6060)."
     echo ""
-    echo "- run-all-tests                    Execute unit tests for both backend and frontend."
-    echo "- run-frontend-tests               Execute unit tests for frontend only."
-    echo "- run-backend-tests                Execute unit tests for backend only."
 }
 
 case $1 in
     ## devenv related commands
+    pull-devenv)
+        pull-devenv ${@:2};
+        ;;
+
     build-devenv)
         build-devenv ${@:2}
         ;;
+
+    push-devenv)
+        push-devenv ${@:2}
+        ;;
+
     start-devenv)
         start-devenv ${@:2}
         ;;
@@ -131,31 +209,24 @@ case $1 in
         log-devenv ${@:2}
         ;;
 
-    ## testin related commands
-
-    # run-all-tests)
-    #     run-all-tests ${@:2}
-    #     ;;
-    # run-frontend-tests)
-    #     run-frontend-tests ${@:2}
-    #     ;;
-    # run-backend-tests)
-    #     run-backend-tests ${@:2}
-    #     ;;
-
     # production builds
-    build-frontend)
-        build-frontend
+    build-app-bundle)
+        build-app-bundle;
         ;;
 
-    build-backend)
-        build-backend
+    build-frontend-bundle)
+        build-frontend-bundle;
         ;;
 
-    build-exporter)
-        build-exporter
+    build-backend-bundle)
+        build-backend-bundle;
         ;;
 
+    build-exporter-bundle)
+        build-exporter-bundle;
+        ;;
+
+    # Docker Image Tasks
     *)
         usage
         ;;

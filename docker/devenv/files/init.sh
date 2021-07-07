@@ -1,13 +1,10 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 
-set -e;
-source ~/.zshrc
+cp /root/.bashrc /home/penpot/.bashrc
+cp /root/.vimrc /home/penpot/.vimrc
+cp /root/.tmux.conf /home/penpot/.tmux.conf
+chown -R penpot:users /home/penpot
 
-echo "[init.sh] Start nginx."
-sudo nginx
-
-echo "[init.sh] Setting up local permissions."
-sudo chown -R uxbox /home/uxbox/local
-
-echo "[init.sh] Ready!"
+set -e
+nginx
 tail -f /dev/null

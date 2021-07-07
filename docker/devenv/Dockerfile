@@ -1,20 +1,20 @@
-FROM debian:buster
+FROM ubuntu:20.04
 LABEL maintainer="Andrey Antukh <niwi@niwi.nz>"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ENV NODE_VERSION=v12.18.3 \
-    CLOJURE_VERSION=1.10.1.641 \
+ENV NODE_VERSION=v14.17.2 \
+    CLOJURE_VERSION=1.10.3.882 \
+    CLJKONDO_VERSION=2021.06.18 \
+    BABASHKA_VERSION=0.4.6 \
     LANG=en_US.UTF-8 \
-    LC_ALL=C.UTF-8
+    LC_ALL=en_US.UTF-8
 
 RUN set -ex; \
     mkdir -p /etc/resolvconf/resolv.conf.d; \
-    echo "nameserver 8.8.8.8" > /etc/resolvconf/resolv.conf.d/tail;
-
-RUN set -ex; \
-    apt-get update && \
-    apt-get install -yq \
+    echo "nameserver 8.8.8.8" > /etc/resolvconf/resolv.conf.d/tail; \
+    apt-get -qq update; \
+    apt-get -qqy install --no-install-recommends \
         locales \
         gnupg2 \
         ca-certificates \
@@ -23,10 +23,24 @@ RUN set -ex; \
         tmux \
         vim \
         curl \
-        zsh \
         bash \
         git \
         rlwrap \
+        unzip \
+        fakeroot \
+    ; \
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen; \
+    locale-gen; \
+    rm -rf /var/lib/apt/lists/*;
+
+RUN set -ex; \
+    useradd -m -g users -s /bin/bash penpot; \
+    passwd penpot -d; \
+    echo "penpot ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+RUN set -ex; \
+    apt-get -qq update; \
+    apt-get -qqy install --no-install-recommends \
         python \
         build-essential \
         imagemagick \
@@ -36,12 +50,15 @@ RUN set -ex; \
         nginx \
         jq \
         redis-tools \
+        woff-tools \
+        woff2 \
+        fontforge \
     ; \
     rm -rf /var/lib/apt/lists/*;
 
 RUN set -ex; \
-    apt-get update && \
-    apt-get install -yq \
+    apt-get -qq update; \
+    apt-get -qqy install \
         gconf-service \
         libasound2 \
         libatk1.0-0 \
@@ -70,6 +87,7 @@ RUN set -ex; \
         libxi6 \
         libxrandr2 \
         libxrender1 \
+        libxshmfence1 \
         libxss1 \
         libxtst6 \
         fonts-liberation \
@@ -79,60 +97,56 @@ RUN set -ex; \
     ; \
     rm -rf /var/lib/apt/lists/*;
 
-RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 0xB1998361219BD9C9 && \
-    echo "deb http://repos.azulsystems.com/debian stable  main" >> /etc/apt/sources.list.d/zulu.list && \
-    apt-get -qq update && \
-    apt-get -qqy install zulu-14 && \
+RUN set -ex; \
+    curl -LfsSo /tmp/openjdk.tar.gz https://github.com/AdoptOpenJDK/openjdk16-binaries/releases/download/jdk-16.0.1%2B9/OpenJDK16U-jdk_x64_linux_hotspot_16.0.1_9.tar.gz; \
+    mkdir -p /usr/lib/jvm/openjdk16; \
+    cd /usr/lib/jvm/openjdk16; \
+    tar -xf /tmp/openjdk.tar.gz --strip-components=1; \
+    rm -rf /tmp/openjdk.tar.gz;
+
+ENV PATH="/usr/lib/jvm/openjdk16/bin:/usr/local/nodejs/bin:$PATH" \
+    JAVA_HOME=/usr/lib/jvm/openjdk16
+
+RUN set -ex; \
+    curl -LfsSo /tmp/clojure.sh https://download.clojure.org/install/linux-install-$CLOJURE_VERSION.sh; \
+    chmod +x /tmp/clojure.sh; \
+    /tmp/clojure.sh; \
+    rm -rf /tmp/clojure.sh;
+
+RUN set -ex; \
+    curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -; \
+    echo "deb http://apt.postgresql.org/pub/repos/apt focal-pgdg main" >> /etc/apt/sources.list.d/postgresql.list; \
+    apt-get -qq update; \
+    apt-get -qqy install postgresql-client-13; \
     rm -rf /var/lib/apt/lists/*;
 
-ENV JAVA_HOME=/usr/lib/jvm/zulu-14-amd64
-
-RUN curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add - && \
-    echo "deb http://apt.postgresql.org/pub/repos/apt buster-pgdg main" >> /etc/apt/sources.list.d/postgresql.list && \
-    apt-get -qq update && \
-    apt-get -qqy install postgresql-client-12 && \
-    rm -rf /var/lib/apt/lists/*;
-
-COPY files/bashrc /root/.bashrc
-COPY files/vimrc /root/.vimrc
-COPY files/phantomjs-mock /usr/bin/phantomjs
-
-ARG EXTERNAL_UID=1000
-
 RUN set -ex; \
-    useradd -m -g users -s /bin/zsh -u $EXTERNAL_UID uxbox; \
-    passwd uxbox -d; \
-    echo "uxbox ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    curl -LfsSo /tmp/nodejs.tar.xz https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.xz; \
+    mkdir -p /usr/local/nodejs; \
+    cd /usr/local/nodejs; \
+    tar -xf /tmp/nodejs.tar.xz --strip-components=1; \
+    chown -R root /usr/local/nodejs; \
+    PATH="$PATH:/usr/local/nodejs/bin"; \
+    /usr/local/nodejs/bin/npm install -g yarn; \
+    /usr/local/nodejs/bin/npm install -g svgo; \
+    rm -rf /tmp/nodejs.tar.xz;
 
+# Install clj-kondo
 RUN set -ex; \
-    wget https://github.com/RazrFalcon/svgcleaner/releases/download/v0.9.5/svgcleaner_linux_x86_64_0.9.5.tar.gz; \
-    tar xvf svgcleaner_linux_x86_64_0.9.5.tar.gz; \
-    mv svgcleaner /usr/local/bin/; \
-    rm -rf svgcleaner_linux_x86_64_0.9.5.tar.gz;
+    curl -LfsSo /tmp/clj-kondo.zip https://github.com/borkdude/clj-kondo/releases/download/v$CLJKONDO_VERSION/clj-kondo-$CLJKONDO_VERSION-linux-amd64.zip; \
+    cd /usr/local/bin; \
+    unzip /tmp/clj-kondo.zip; \
+    rm /tmp/clj-kondo.zip;
 
+# Install babashka
 RUN set -ex; \
-    wget "https://download.clojure.org/install/linux-install-$CLOJURE_VERSION.sh"; \
-    chmod +x "linux-install-$CLOJURE_VERSION.sh"; \
-    "./linux-install-$CLOJURE_VERSION.sh"; \
-    rm -rf "linux-install-$CLOJURE_VERSION.sh"
+    cd /tmp; \
+    curl -LfsSo /tmp/babashka.tar.gz https://github.com/babashka/babashka/releases/download/v$BABASHKA_VERSION/babashka-$BABASHKA_VERSION-linux-amd64.tar.gz; \
+    cd /usr/local/bin; \
+    tar -xf /tmp/babashka.tar.gz; \
+    rm -rf /tmp/babashka.tar.gz;
 
-USER uxbox
-WORKDIR /home/uxbox
-
-COPY files/bashrc /home/uxbox/.bashrc
-COPY files/zshrc /home/uxbox/.zshrc
-COPY files/vimrc /home/uxbox/.vimrc
-COPY files/start-tmux.sh /home/uxbox/start-tmux.sh
-COPY files/tmux.conf /home/uxbox/.tmux.conf
-COPY files/entrypoint.sh /home/uxbox/
-COPY files/init.sh /home/uxbox/
-
-RUN set -ex; \
-    git clone https://github.com/creationix/nvm.git .nvm; \
-    bash -c "source .nvm/nvm.sh && nvm install $NODE_VERSION"; \
-    bash -c "source .nvm/nvm.sh && nvm alias default $NODE_VERSION"; \
-    bash -c "source .nvm/nvm.sh && nvm use default"; \
-    bash -c "source .nvm/nvm.sh && npm install -g yarn";
+WORKDIR /home
 
 EXPOSE 3447
 EXPOSE 3448
@@ -140,5 +154,17 @@ EXPOSE 3449
 EXPOSE 6060
 EXPOSE 9090
 
-ENTRYPOINT ["zsh", "/home/uxbox/entrypoint.sh"]
-CMD ["/home/uxbox/init.sh"]
+COPY files/nginx.conf /etc/nginx/nginx.conf
+COPY files/phantomjs-mock /usr/bin/phantomjs
+
+COPY files/bashrc         /root/.bashrc
+COPY files/vimrc          /root/.vimrc
+COPY files/tmux.conf      /root/.tmux.conf
+COPY files/sudoers        /etc/sudoers
+
+COPY files/start-tmux.sh  /home/start-tmux.sh
+COPY files/entrypoint.sh  /home/entrypoint.sh
+COPY files/init.sh        /home/init.sh
+
+ENTRYPOINT ["/home/entrypoint.sh"]
+CMD ["/home/init.sh"]

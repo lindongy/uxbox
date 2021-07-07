@@ -2,19 +2,15 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.workspace.shapes.bounding-box
   (:require
-   [cuerdas.core :as str]
-   [rumext.alpha :as mf]
-   [app.util.debug :as debug]
-   [app.common.geom.shapes :as geom]
-   [app.common.geom.matrix :as gmt]
-   [app.common.geom.point :as gpt]
-   [app.util.debug :refer [debug?]]
+   ["randomcolor" :as rdcolor]
+   [app.common.geom.shapes :as gsh]
    [app.main.refs :as refs]
-   ["randomcolor" :as rdcolor]))
+   [cuerdas.core :as str]
+   [rumext.alpha :as mf]))
 
 (defn fixed
   [num]
@@ -35,40 +31,60 @@
              :stroke-width "1px"
              :stroke-opacity 0.5}]]))
 
+(mf/defc render-rect [{{:keys [x y width height]} :rect :keys [color transform]}]
+  [:rect  {:x x
+           :y y
+           :width width
+           :height height
+           :transform (or transform "none")
+           :style {:stroke color
+                   :fill "none"
+                   :stroke-width "1px"
+                   :pointer-events "none"}}])
+
+(mf/defc render-rect-points [{:keys [points color]}]
+  (for [[p1 p2] (map vector points (concat (rest points) [(first points)]))]
+    [:line {:x1 (:x p1)
+            :y1 (:y p1)
+            :x2 (:x p2)
+            :y2 (:y p2)
+            :style {:stroke color
+                    :stroke-width "1px"}}]))
+
 (mf/defc bounding-box
   {::mf/wrap-props false}
   [props]
-  (when (debug? :bounding-boxes)
-    (let [shape (unchecked-get props "shape")
-          frame (unchecked-get props "frame")
-          selrect (-> shape :selrect)
-          shape-center (geom/center shape)
-          line-color (rdcolor #js {:seed (str (:id shape))})
-          zoom (mf/deref refs/selected-zoom)]
-      [:g.bounding-box
-       [:text {:x (:x selrect)
-               :y (- (:y selrect) 5)
-               :font-size 10
-               :fill line-color
-               :stroke "white"
-               :stroke-width 0.1}
-        (str/format "%s - (%s, %s)" (str/slice (str (:id shape)) 0 8) (fixed (:x shape)) (fixed (:y shape)))]
+  (let [shape        (unchecked-get props "shape")
+        bounding-box (gsh/points->selrect (-> shape :points))
+        shape-center (gsh/center-shape shape)
+        line-color   (rdcolor #js {:seed (str (:id shape))})
+        zoom         (mf/deref refs/selected-zoom)]
 
-       [:& cross-point {:point shape-center
-                        :zoom zoom
-                        :color line-color}]
+    [:g.bounding-box
+     [:text {:x (:x bounding-box)
+             :y (- (:y bounding-box) 5)
+             :font-size 10
+             :fill line-color
+             :stroke "white"
+             :stroke-width 0.1}
+      (str/format "%s - (%s, %s)" (str/slice (str (:id shape)) 0 8) (fixed (:x bounding-box)) (fixed (:y bounding-box)))]
 
-       (for [point (:points shape)]
-         [:& cross-point {:point point
-                          :zoom zoom
-                          :color line-color}])
+     [:g.center
+      [:& cross-point {:point shape-center
+                       :zoom zoom
+                       :color line-color}]]
 
-       [:rect  {:x (:x selrect)
-                :y (:y selrect)
-                :width (:width selrect)
-                :height (:height selrect)
-                :style {:stroke line-color
-                        :fill "transparent"
-                        :stroke-width "1px"
-                        :stroke-opacity 0.5
-                        :pointer-events "none"}}]])))
+     [:g.points
+      (for [point (:points shape)]
+        [:& cross-point {:point point
+                         :zoom zoom
+                         :color line-color}])
+      #_[:& render-rect-points {:points (:points shape)
+                                :color line-color}]]
+
+     [:g.selrect
+      [:& render-rect {:rect (:selrect shape)
+                       ;; :transform (gsh/transform-matrix shape)
+                       :color line-color}]
+      #_[:& render-rect {:rect bounding-box
+                         :color line-color}]]]))

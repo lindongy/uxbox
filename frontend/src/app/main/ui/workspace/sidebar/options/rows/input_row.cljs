@@ -2,18 +2,14 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.workspace.sidebar.options.rows.input-row
   (:require
-   [rumext.alpha :as mf]
-   [app.common.data :as d]
-   [app.main.ui.components.select :refer [select]]
    [app.main.ui.components.editable-select :refer [editable-select]]
-   [app.util.dom :as dom]))
+   [app.main.ui.components.numeric-input :refer [numeric-input]]
+   [app.main.ui.components.select :refer [select]]
+   [rumext.alpha :as mf]))
 
 (mf/defc input-row [{:keys [label options value class min max on-change type placeholder]}]
   [:div.row-flex.input-row
@@ -35,17 +31,14 @@
                            :placeholder placeholder
                            :on-change on-change}]
 
-      (let [handle-change
-            (fn [event]
-              (let [value (-> event dom/get-target dom/get-value d/parse-integer)]
-                (when (and (not (nil? on-change))
-                           (or (not min) (>= value min))
-                           (or (not max) (<= value max)))
-                  (on-change value))))]
-        [:input.input-text
-         {:placeholder placeholder
-          :type "number"
-          :on-change handle-change
-          :value (or value "")}]))
-    
-    ]])
+      :text
+      [:input {:value value
+               :class "input-text"
+               :on-change on-change} ]
+
+      [:> numeric-input {:placeholder placeholder
+                         :min min
+                         :max max
+                         :on-change on-change
+                         :value (or value "")}])]])
+

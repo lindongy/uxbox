@@ -2,36 +2,104 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.static
   (:require
-   [cljs.spec.alpha :as s]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]))
+   [app.main.data.messages :as dm]
+   [app.main.data.users :as du]
+   [app.main.refs :as refs]
+   [app.main.store :as st]
+   [app.main.ui.icons :as i]
+   [app.util.i18n :refer [tr]]
+   [app.util.router :as rt]
+   [rumext.alpha :as mf]))
 
-(mf/defc not-found-page
-  [{:keys [error] :as props}]
-  [:section.not-found-layout
-   [:div.not-found-header i/logo]
-   [:div.not-found-content
-    [:div.message-container
-     [:div.error-img i/icon-empty]
-     [:div.main-message "404"]
-     [:div.desc-message "Oops! Page not found"]
-     [:a.btn-primary.btn-small "Go back"]]]])
+(defn- go-to-dashboard
+  [profile]
+  (let [team-id (du/get-current-team-id profile)]
+    (st/emit! (rt/nav :dashboard-projects {:team-id team-id}))))
 
-(mf/defc not-authorized-page
-  [{:keys [error] :as props}]
-  [:section.not-found-layout
-   [:div.not-found-header i/logo]
-   [:div.not-found-content
-    [:div.message-container
-     [:div.error-img i/icon-lock]
-     [:div.main-message "403"]
-     [:div.desc-message "Sorry, you are not authorized to access this page."]
-     #_[:a.btn-primary.btn-small "Go back"]]]])
+(mf/defc not-found
+  []
+  (let [profile (mf/deref refs/profile)]
+    [:section.exception-layout
+     [:div.exception-header
+      {:on-click (partial go-to-dashboard profile)}
+      i/logo]
+     [:div.exception-content
+      [:div.container
+       [:div.image i/icon-empty]
+       [:div.main-message (tr "labels.not-found.main-message")]
+       [:div.desc-message (tr "labels.not-found.desc-message")]
+       [:div.sign-info
+        [:span (tr "labels.not-found.auth-info") " " [:b (:email profile)]]
+        [:a.btn-primary.btn-small
+         {:on-click (st/emitf (du/logout))}
+         (tr "labels.sign-out")]]]]]))
+
+(mf/defc bad-gateway
+  []
+  (let [profile (mf/deref refs/profile)]
+    [:section.exception-layout
+     [:div.exception-header
+      {:on-click (partial go-to-dashboard profile)}
+      i/logo]
+     [:div.exception-content
+      [:div.container
+       [:div.image i/icon-empty]
+       [:div.main-message (tr "labels.bad-gateway.main-message")]
+       [:div.desc-message (tr "labels.bad-gateway.desc-message")]
+       [:div.sign-info
+        [:a.btn-primary.btn-small
+         {:on-click (st/emitf #(dissoc % :exception))}
+         (tr "labels.retry")]]]]]))
+
+(mf/defc service-unavailable
+  []
+  (let [profile (mf/deref refs/profile)]
+    [:section.exception-layout
+     [:div.exception-header
+      {:on-click (partial go-to-dashboard profile)}
+      i/logo]
+     [:div.exception-content
+      [:div.container
+       [:div.image i/icon-empty]
+       [:div.main-message (tr "labels.service-unavailable.main-message")]
+       [:div.desc-message (tr "labels.service-unavailable.desc-message")]
+       [:div.sign-info
+        [:a.btn-primary.btn-small
+         {:on-click (st/emitf #(dissoc % :exception))}
+         (tr "labels.retry")]]]]]))
+
+(mf/defc internal-error
+  []
+  (let [profile (mf/deref refs/profile)]
+    [:section.exception-layout
+     [:div.exception-header
+      {:on-click (partial go-to-dashboard profile)}
+      i/logo]
+     [:div.exception-content
+      [:div.container
+       [:div.image i/icon-empty]
+       [:div.main-message (tr "labels.internal-error.main-message")]
+       [:div.desc-message (tr "labels.internal-error.desc-message")]
+       [:div.sign-info
+        [:a.btn-primary.btn-small
+         {:on-click (st/emitf (dm/assign-exception nil))}
+         (tr "labels.retry")]]]]]))
+
+(mf/defc exception-page
+  [{:keys [data] :as props}]
+  (case (:type data)
+    :not-found
+    [:& not-found]
+
+    :bad-gateway
+    [:& bad-gateway]
+
+    :service-unavailable
+    [:& service-unavailable]
+
+    [:& internal-error]))
 

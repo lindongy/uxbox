@@ -1,13 +1,15 @@
 #!/bin/sh
 
-set -e
+export PENPOT_ASSERTS_ENABLED=true
 
-if [ ! -e ~/local/.fixtures-loaded ]; then
+set -ex
+
+if [ ! -e ~/.fixtures-loaded ]; then
     echo "Loading fixtures..."
     clojure -Adev -X:fn-fixtures
-    touch ~/local/.fixtures-loaded
+    touch ~/.fixtures-loaded
 fi
 
-clojure -m app.main
+clojure -A:dev -M -m app.main
 
 

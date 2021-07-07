@@ -2,15 +2,13 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2015-2016 Andrey Antukh <niwi@niwi.nz>
-;; Copyright (c) 2015-2016 Juan de la Cruz <delacruzgarciajuan@gmail.com>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.dom.dnd
   "Drag & Drop interop helpers."
   (:require
-    [cuerdas.core :as str]
-    [app.util.data :refer (read-string)]
-    [app.util.transit :as t]))
+   [app.common.transit :as t]
+   [cuerdas.core :as str]))
 
 ;; This is the official documentation for the dnd API:
 ;; https://developer.mozilla.org/en-US/docs/Web/API/HTML_Drag_and_Drop_API
@@ -41,7 +39,7 @@
 (defn trace
   ;; This function is useful to debug the dnd interface behaviour when something weird occurs.
   [event data label]
-  (let [currentTarget (.-currentTarget event)
+  (let [;;currentTarget (.-currentTarget event)
         relatedTarget (.-relatedTarget event)]
     (js/console.log
       label
@@ -55,12 +53,12 @@
 
 (defn set-data!
   ([e data]
-   (set-data! e "app/data" data))
+   (set-data! e "penpot/data" data))
   ([e data-type data]
    (let [dt (.-dataTransfer e)]
      (if (or (str/starts-with? data-type "application")
-             (str/starts-with? data-type "app"))
-       (.setData dt data-type (t/encode data))
+             (str/starts-with? data-type "penpot"))
+       (.setData dt data-type (t/encode-str data))
        (.setData dt data-type data))
      e)))
 
@@ -98,14 +96,22 @@
         related (.-relatedTarget e)]
     (.contains target related)))
 
+(defn broken-event?
+  [e]
+  ;; WebKit browsers (Safari & Epiphany) do not send the relatedEvent
+  ;; property (https://bugs.webkit.org/show_bug.cgi?id=66547) so
+  ;; there is no decent way of discriminating redundant enter/leave
+  ;; events.
+  (nil? (.-relatedTarget e)))
+
 (defn get-data
   ([e]
-   (get-data e "app/data"))
+   (get-data e "penpot/data"))
   ([e data-type]
    (let [dt (.-dataTransfer e)]
-     (if (or (str/starts-with? data-type "app")
+     (if (or (str/starts-with? data-type "penpot")
              (= data-type "application/json"))
-       (t/decode (.getData dt data-type))
+       (t/decode-str (.getData dt data-type))
        (.getData dt data-type)))))
 
 (defn get-files

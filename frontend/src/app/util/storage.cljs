@@ -2,69 +2,42 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2016 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.storage
-  (:require [app.util.transit :as t]))
-
-(defn- ^boolean is-worker?
-  []
-  (or (= *target* "nodejs")
-      (not (exists? js/window))))
+  (:require
+   [app.common.transit :as t]
+   [app.util.globals :as g]
+   [app.util.timers :as tm]))
 
 (defn- persist
-  [alias value]
-  (when-not (is-worker?)
-    (let [key (name alias)
-          value (t/encode value)]
-      (.setItem js/localStorage key value))))
+  [storage prev curr]
+  (run! (fn [key]
+          (let [prev* (get prev key)
+                curr* (get curr key)]
+            (when (not= curr* prev*)
+              (tm/schedule-on-idle
+               #(if (some? curr*)
+                  (.setItem ^js storage (t/encode-str key) (t/encode-str curr*))
+                  (.removeItem ^js storage (t/encode-str key)))))))
+
+        (into #{} (concat (keys curr)
+                          (keys prev)))))
 
 (defn- load
-  [alias]
-  (when-not (is-worker?)
-    (let [data (.getItem js/localStorage (name alias))]
-      (try
-        (t/decode data)
-        (catch :default e
-          (js/console.error "Error on loading data from local storage." e)
-          nil)))))
+  [storage]
+  (when storage
+    (let [len (.-length ^js storage)]
+      (reduce (fn [res index]
+                (let [key (.key ^js storage index)
+                      val (.getItem ^js storage key)]
+                  (try
+                    (assoc res (t/decode-str key) (t/decode-str val))
+                    (catch :default _e
+                      res))))
+              {}
+              (range len)))))
 
-(defn- make-storage
-  [alias]
-  (let [data (atom (load alias))]
-    (add-watch data :sub #(persist alias %4))
-    (reify
-      Object
-      (toString [_]
-        (str "Storage" (pr-str @data)))
 
-      ICounted
-      (-count [_]
-        (count @data))
-
-      ISeqable
-      (-seq [_]
-        (seq @data))
-
-      IReset
-      (-reset! [self newval]
-        (reset! data newval))
-
-      ISwap
-      (-swap! [self f]
-        (swap! data f))
-      (-swap! [self f x]
-        (swap! data f x))
-      (-swap! [self f x y]
-        (swap! data f x y))
-      (-swap! [self f x y more]
-        (apply swap! data f x y more))
-
-      ILookup
-      (-lookup [_ key]
-        (get @data key nil))
-      (-lookup [_ key not-found]
-        (get @data key not-found)))))
-
-(def storage
-  (make-storage "app"))
+(defonce storage (atom (load (unchecked-get g/global "localStorage"))))
+(add-watch storage :persistence #(persist js/localStorage %3 %4))

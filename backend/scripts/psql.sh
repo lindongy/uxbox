@@ -1,2 +1,0 @@
-#!/usr/bin/env bash
-PGPASSWORD=$app_DATABASE_PASSWORD psql $app_DATABASE_URI -U $app_DATABASE_USERNAME

@@ -2,15 +2,19 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2020 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.async
   (:require
-   [clojure.spec.alpha :as s]
-   [clojure.tools.logging :as log]
-   [clojure.core.async :as a])
+   [clojure.core.async :as a]
+   [clojure.spec.alpha :as s])
   (:import
    java.util.concurrent.Executor))
+
+(s/def ::executor #(instance? Executor %))
+
+(defonce processors
+  (delay (.availableProcessors (Runtime/getRuntime))))
 
 (defmacro go-try
   [& body]
@@ -18,13 +22,6 @@
      (try
        ~@body
        (catch Exception e# e#))))
-
-(defmacro <?
-  [ch]
-  `(let [r# (a/<! ~ch)]
-     (if (instance? Exception r#)
-       (throw r#)
-       r#)))
 
 (defmacro thread-try
   [& body]
@@ -34,8 +31,12 @@
        (catch Exception e#
          e#))))
 
-
-(s/def ::executor #(instance? Executor %))
+(defmacro <?
+  [ch]
+  `(let [r# (a/<! ~ch)]
+     (if (instance? Exception r#)
+       (throw r#)
+       r#)))
 
 (defn thread-call
   [^Executor executor f]
@@ -45,12 +46,58 @@
                 (fn []
                   (try
                     (let [ret (try (f) (catch Exception e e))]
-                      (when-not (nil? ret)
-                        (a/>!! c ret)))
+                      (when (some? ret) (a/>!! c ret)))
                     (finally
                       (a/close! c)))))
       c
-      (catch java.util.concurrent.RejectedExecutionException e
-        (a/offer! c e)
+      (catch java.util.concurrent.RejectedExecutionException _e
         (a/close! c)
         c))))
+
+
+(defmacro with-thread
+  [executor & body]
+  (if (= executor ::default)
+    `(a/thread-call (^:once fn* [] (try ~@body (catch Exception e# e#))))
+    `(thread-call ~executor (^:once fn* [] ~@body))))
+
+(defn batch
+  [in {:keys [max-batch-size
+              max-batch-age
+              buffer-size
+              init]
+       :or {max-batch-size 200
+            max-batch-age (* 30 1000)
+            buffer-size 128
+            init #{}}
+       :as opts}]
+  (let [out (a/chan buffer-size)]
+    (a/go-loop [tch (a/timeout max-batch-age) buf init]
+      (let [[val port] (a/alts! [tch in])]
+        (cond
+          (identical? port tch)
+          (if (empty? buf)
+            (recur (a/timeout max-batch-age) buf)
+            (do
+              (a/>! out [:timeout buf])
+              (recur (a/timeout max-batch-age) init)))
+
+          (nil? val)
+          (if (empty? buf)
+            (a/close! out)
+            (do
+              (a/offer! out [:timeout buf])
+              (a/close! out)))
+
+          (identical? port in)
+          (let [buf (conj buf val)]
+            (if (>= (count buf) max-batch-size)
+              (do
+                (a/>! out [:size buf])
+                (recur (a/timeout max-batch-age) init))
+              (recur tch buf))))))
+    out))
+
+(defn thread-sleep
+  [ms]
+  (Thread/sleep ms))

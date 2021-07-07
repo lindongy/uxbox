@@ -2,27 +2,23 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.transit
   (:require
-   [cognitect.transit :as t]
-   [clojure.java.io :as io]
-   [linked.core :as lk]
-   [app.util.time :as dt]
-   [app.util.data :as data]
+   [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
-   [app.common.geom.matrix :as gmt])
+   [cognitect.transit :as t]
+   [linked.core :as lk])
   (:import
-   linked.set.LinkedSet
+   app.common.geom.matrix.Matrix
+   app.common.geom.point.Point
    java.io.ByteArrayInputStream
    java.io.ByteArrayOutputStream
    java.io.File
-   app.common.geom.point.Point
-   app.common.geom.matrix.Matrix))
+   java.time.Instant
+   java.time.OffsetDateTime
+   linked.set.LinkedSet))
 
 ;; --- Handlers
 
@@ -30,6 +26,8 @@
   (t/write-handler
    (constantly "file")
    (fn [v] (str v))))
+
+;; --- GEOM
 
 (def point-write-handler
   (t/write-handler
@@ -47,6 +45,8 @@
 (def matrix-read-handler
   (t/read-handler gmt/map->Matrix))
 
+;; --- Ordered Set
+
 (def ordered-set-write-handler
   (t/write-handler
    (constantly "ordered-set")
@@ -55,18 +55,38 @@
 (def ordered-set-read-handler
   (t/read-handler #(into (lk/set) %)))
 
+
+;; --- TIME
+
+(def ^:private instant-read-handler
+  (t/read-handler
+   (fn [v] (-> (Long/parseLong v)
+               (Instant/ofEpochMilli)))))
+
+(def ^:private instant-write-handler
+  (t/write-handler
+   (constantly "m")
+   (fn [v] (str (.toEpochMilli ^Instant v)))))
+
+(def ^:private offset-datetime-write-handler
+  (t/write-handler
+   (constantly "m")
+   (fn [v] (str (.toEpochMilli (.toInstant ^OffsetDateTime v))))))
+
 (def +read-handlers+
-  (assoc dt/+read-handlers+
-         "matrix" matrix-read-handler
-         "ordered-set" ordered-set-read-handler
-         "point" point-read-handler))
+  {"matrix"      matrix-read-handler
+   "ordered-set" ordered-set-read-handler
+   "point"       point-read-handler
+   "m"           instant-read-handler
+   "instant"     instant-read-handler})
 
 (def +write-handlers+
-  (assoc dt/+write-handlers+
-         File file-write-handler
-         LinkedSet ordered-set-write-handler
-         Matrix matrix-write-handler
-         Point point-write-handler))
+  {File           file-write-handler
+   LinkedSet      ordered-set-write-handler
+   Matrix         matrix-write-handler
+   Point          point-write-handler
+   Instant        instant-write-handler
+   OffsetDateTime offset-datetime-write-handler})
 
 ;; --- Low-Level Api
 
@@ -96,21 +116,33 @@
 (declare str->bytes)
 (declare bytes->str)
 
+(defn decode-stream
+  ([input]
+   (decode-stream input nil))
+  ([input opts]
+   (read! (reader input opts))))
+
 (defn decode
   ([data]
    (decode data nil))
   ([data opts]
    (with-open [input (ByteArrayInputStream. ^bytes data)]
-     (read! (reader input opts)))))
+     (decode-stream input opts))))
+
+(defn encode-stream
+  ([data out]
+   (encode-stream data out nil))
+  ([data out opts]
+   (let [w (writer out opts)]
+     (write! w data))))
 
 (defn encode
   ([data]
    (encode data nil))
   ([data opts]
    (with-open [out (ByteArrayOutputStream.)]
-     (let [w (writer out opts)]
-       (write! w data)
-       (.toByteArray out)))))
+     (encode-stream data out opts)
+     (.toByteArray out))))
 
 (defn decode-str
   [message]
@@ -118,9 +150,12 @@
        (decode)))
 
 (defn encode-str
-  [message]
-  (->> (encode message)
-       (bytes->str)))
+  ([message]
+   (->> (encode message)
+        (bytes->str)))
+  ([message opts]
+   (->> (encode message opts)
+        (bytes->str))))
 
 (defn encode-verbose-str
   [message]

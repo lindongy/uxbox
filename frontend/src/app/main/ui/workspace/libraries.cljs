@@ -2,21 +2,49 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2016 Andrey Antukh <niwi@niwi.nz>
-;; Copyright (c) 2016 Juan de la Cruz <delacruzgarciajuan@gmail.com>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.workspace.libraries
   (:require
-   [rumext.alpha :as mf]
-   [cuerdas.core :as str]
+   [app.common.data :as d]
+   [app.main.data.modal :as modal]
+   [app.main.data.workspace :as dw]
+   [app.main.data.workspace.libraries :as dwl]
+   [app.main.refs :as refs]
+   [app.main.store :as st]
+   [app.main.ui.icons :as i]
+   [app.util.data :refer [matches-search]]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [t tr]]
-   [app.util.data :refer [classnames matches-search]]
-   [app.main.store :as st]
-   [app.main.refs :as refs]
-   [app.main.data.workspace :as dw]
-   [app.main.ui.icons :as i]
-   [app.main.ui.modal :as modal]))
+   [cuerdas.core :as str]
+   [okulary.core :as l]
+   [rumext.alpha :as mf]))
+
+(def workspace-file
+  (l/derived :workspace-file st/state))
+
+(defn contents-str
+  [library]
+  (let [components-count (count (get-in library [:data :components] []))
+        graphics-count (count (get-in library [:data :media] []))
+        colors-count (count (get-in library [:data :colors] []))
+        typography-count (count (get-in library [:data :typographies] []))]
+    ;; Include a &nbsp; so this block has always some content
+    (str
+      (str/join " · "
+                (cond-> []
+                  (< 0 components-count)
+                  (conj (tr "workspace.libraries.components" components-count))
+
+                  (< 0 graphics-count)
+                  (conj (tr "workspace.libraries.graphics" graphics-count))
+
+                  (< 0 colors-count)
+                  (conj (tr "workspace.libraries.colors" colors-count))
+
+                  (< 0 typography-count)
+                  (conj (tr "workspace.libraries.typography" typography-count))))
+      "\u00A0")))
 
 (mf/defc libraries-tab
   [{:keys [file libraries shared-files] :as props}]
@@ -40,44 +68,27 @@
 
         on-search-clear
         (mf/use-callback
-         (fn [event]
+         (fn [_]
            (reset! search-term "")))
 
         link-library
         (mf/use-callback (mf/deps file) #(st/emit! (dw/link-file-to-library (:id file) %)))
 
         unlink-library
-        (mf/use-callback (mf/deps file) #(st/emit! (dw/unlink-file-from-library (:id file) %)))
-
-        contents-str
-        (fn [library graphics-count colors-count]
-          ;; Include a &nbsp; so this block has always some content
-          (str
-           (str/join " · "
-                     (cond-> []
-                       (< 0 graphics-count)
-                       (conj (tr "workspace.libraries.graphics" graphics-count))
-
-                       (< 0 colors-count)
-                       (conj (tr "workspace.libraries.colors" colors-count))))
-           "\u00A0"))]
+        (mf/use-callback (mf/deps file) #(st/emit! (dw/unlink-file-from-library (:id file) %)))]
     [:*
      [:div.section
       [:div.section-title (tr "workspace.libraries.in-this-file")]
       [:div.section-list
        [:div.section-list-item
         [:div.item-name (tr "workspace.libraries.file-library")]
-        [:div.item-contents (contents-str file
-                                          (count (:media-objects file))
-                                          (count (:colors file)))]]
+        [:div.item-contents (contents-str file)]]
        (for [library sorted-libraries]
          [:div.section-list-item {:key (:id library)}
           [:div.item-name (:name library)]
-          [:div.item-contents (contents-str library
-                                            (count (:media-objects library))
-                                            (count (:colors library)))]
+          [:div.item-contents (contents-str library)]
           [:input.item-button {:type "button"
-                               :value (tr "workspace.libraries.remove")
+                               :value (tr "labels.remove")
                                :on-click #(unlink-library (:id library))}]])
        ]]
      [:div.section
@@ -99,9 +110,7 @@
          (for [file filtered-files]
            [:div.section-list-item {:key (:id file)}
             [:div.item-name (:name file)]
-            [:div.item-contents (contents-str file
-                                              (:graphics-count file)
-                                              (:colors-count file))]
+            [:div.item-contents (contents-str file)]
             [:input.item-button {:type "button"
                                  :value (tr "workspace.libraries.add")
                                  :on-click #(link-library (:id file))}]])]
@@ -113,18 +122,37 @@
 
 
 (mf/defc updates-tab
-  []
-  [:div])
-
+  [{:keys [file libraries] :as props}]
+  (let [libraries-need-sync (filter #(> (:modified-at %) (:synced-at %))
+                                        (vals libraries))
+        update-library #(st/emit! (dwl/sync-file (:id file) %))]
+  [:div.section
+   (if (empty? libraries-need-sync)
+     [:div.section-list-empty
+      i/library
+      (tr "workspace.libraries.no-libraries-need-sync")]
+     [:*
+       [:div.section-title (tr "workspace.libraries.library")]
+       [:div.section-list
+        (for [library libraries-need-sync]
+          [:div.section-list-item {:key (:id library)}
+           [:div.item-name (:name library)]
+           [:div.item-contents (contents-str library)]
+           [:input.item-button {:type "button"
+                                :value (tr "workspace.libraries.update")
+                                :on-click #(update-library (:id library))}]])]])]))
 
 (mf/defc libraries-dialog
+  {::mf/register modal/components
+   ::mf/register-as :libraries-dialog}
   [{:keys [] :as ctx}]
   (let [selected-tab (mf/use-state :libraries)
 
         locale       (mf/deref i18n/locale)
         project      (mf/deref refs/workspace-project)
-        file         (mf/deref refs/workspace-file)
-        libraries    (mf/deref refs/workspace-libraries)
+        file         (mf/deref workspace-file)
+        libraries    (->> (mf/deref refs/workspace-libraries)
+                          (d/removem (fn [[_ val]] (:is-indirect val))))
         shared-files (mf/deref refs/workspace-shared-files)
 
         change-tab   #(reset! selected-tab %)
@@ -142,11 +170,11 @@
       [:div.modal-content
        [:div.libraries-header
         [:div.header-item
-         {:class (classnames :active (= @selected-tab :libraries))
+         {:class (dom/classnames :active (= @selected-tab :libraries))
           :on-click #(change-tab :libraries)}
          (t locale "workspace.libraries.libraries")]
         [:div.header-item
-         {:class (classnames :active (= @selected-tab :updates))
+         {:class (dom/classnames :active (= @selected-tab :updates))
           :on-click #(change-tab :updates)}
          (t locale "workspace.libraries.updates")]]
        [:div.libraries-content
@@ -156,5 +184,6 @@
                              :libraries libraries
                              :shared-files shared-files}]
           :updates
-          [:& updates-tab {}])]]]]))
+          [:& updates-tab {:file file
+                           :libraries libraries}])]]]]))
 

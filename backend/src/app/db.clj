@@ -2,59 +2,117 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2019 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.db
   (:require
-   [clojure.spec.alpha :as s]
-   [clojure.data.json :as json]
-   [clojure.string :as str]
-   [clojure.tools.logging :as log]
-   [lambdaisland.uri :refer [uri]]
-   [mount.core :as mount :refer [defstate]]
-   [next.jdbc :as jdbc]
-   [next.jdbc.date-time :as jdbc-dt]
-   [next.jdbc.optional :as jdbc-opt]
-   [next.jdbc.result-set :as jdbc-rs]
-   [next.jdbc.sql :as jdbc-sql]
-   [next.jdbc.sql.builder :as jdbc-bld]
+   [app.common.data :as d]
    [app.common.exceptions :as ex]
-   [app.config :as cfg]
+   [app.common.geom.point :as gpt]
+   [app.common.spec :as us]
+   [app.common.transit :as t]
+   [app.common.uuid :as uuid]
+   [app.db.sql :as sql]
    [app.metrics :as mtx]
+   [app.util.json :as json]
+   [app.util.logging :as l]
+   [app.util.migrations :as mg]
    [app.util.time :as dt]
-   [app.util.transit :as t]
-   [app.util.data :as data])
+   [clojure.java.io :as io]
+   [clojure.spec.alpha :as s]
+   [integrant.core :as ig]
+   [next.jdbc :as jdbc]
+   [next.jdbc.date-time :as jdbc-dt])
   (:import
-   org.postgresql.util.PGobject
-   org.postgresql.util.PGInterval
-   com.zaxxer.hikari.metrics.prometheus.PrometheusMetricsTrackerFactory
    com.zaxxer.hikari.HikariConfig
-   com.zaxxer.hikari.HikariDataSource))
+   com.zaxxer.hikari.HikariDataSource
+   com.zaxxer.hikari.metrics.prometheus.PrometheusMetricsTrackerFactory
+   java.lang.AutoCloseable
+   java.sql.Connection
+   java.sql.Savepoint
+   org.postgresql.PGConnection
+   org.postgresql.geometric.PGpoint
+   org.postgresql.largeobject.LargeObject
+   org.postgresql.largeobject.LargeObjectManager
+   org.postgresql.jdbc.PgArray
+   org.postgresql.util.PGInterval
+   org.postgresql.util.PGobject))
+
+(declare open)
+(declare create-pool)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Initialization
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(declare instrument-jdbc!)
+
+(s/def ::name keyword?)
+(s/def ::uri ::us/not-empty-string)
+(s/def ::min-pool-size ::us/integer)
+(s/def ::max-pool-size ::us/integer)
+(s/def ::migrations map?)
+
+(defmethod ig/pre-init-spec ::pool [_]
+  (s/keys :req-un [::uri ::name ::min-pool-size ::max-pool-size ::migrations ::mtx/metrics]))
+
+(defmethod ig/init-key ::pool
+  [_ {:keys [migrations metrics] :as cfg}]
+  (l/info :action "initialize connection pool"
+          :name (d/name (:name cfg))
+          :uri (:uri cfg))
+  (instrument-jdbc! (:registry metrics))
+  (let [pool (create-pool cfg)]
+    (when (seq migrations)
+      (with-open [conn ^AutoCloseable (open pool)]
+        (mg/setup! conn)
+        (doseq [[name steps] migrations]
+          (mg/migrate! conn {:name (d/name name) :steps steps}))))
+    pool))
+
+(defmethod ig/halt-key! ::pool
+  [_ pool]
+  (.close ^HikariDataSource pool))
+
+(defn- instrument-jdbc!
+  [registry]
+  (mtx/instrument-vars!
+   [#'next.jdbc/execute-one!
+    #'next.jdbc/execute!]
+   {:registry registry
+    :type :counter
+    :name "database_query_total"
+    :help "An absolute counter of database queries."}))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; API & Impl
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def initsql
-  (str "SET statement_timeout = 10000;\n"
-       "SET idle_in_transaction_session_timeout = 30000;"))
+  (str "SET statement_timeout = 120000;\n"
+       "SET idle_in_transaction_session_timeout = 120000;"))
 
 (defn- create-datasource-config
-  [cfg]
-  (let [dburi    (:database-uri cfg)
-        username (:database-username cfg)
-        password (:database-password cfg)
-        config (HikariConfig.)
-        mfactory (PrometheusMetricsTrackerFactory. mtx/registry)]
+  [{:keys [metrics] :as cfg}]
+  (let [dburi    (:uri cfg)
+        username (:username cfg)
+        password (:password cfg)
+        config   (HikariConfig.)
+        mtf      (PrometheusMetricsTrackerFactory. (:registry metrics))]
     (doto config
       (.setJdbcUrl (str "jdbc:" dburi))
-      (.setPoolName "main")
+      (.setPoolName (d/name (:name cfg)))
       (.setAutoCommit true)
       (.setReadOnly false)
       (.setConnectionTimeout 8000)  ;; 8seg
-      (.setValidationTimeout 4000)  ;; 4seg
-      (.setIdleTimeout 300000)      ;; 5min
-      (.setMaxLifetime 900000)      ;; 15min
-      (.setMinimumIdle 0)
-      (.setMaximumPoolSize 15)
+      (.setValidationTimeout 8000)  ;; 8seg
+      (.setIdleTimeout 120000)      ;; 2min
+      (.setMaxLifetime 1800000)     ;; 30min
+      (.setMinimumIdle (:min-pool-size cfg 0))
+      (.setMaximumPoolSize (:max-pool-size cfg 30))
+      (.setMetricsTrackerFactory mtf)
       (.setConnectionInitSql initsql)
-      (.setMetricsTrackerFactory mfactory))
+      (.setInitializationFailTimeout -1))
     (when username (.setUsername config username))
     (when password (.setPassword config password))
     config))
@@ -67,7 +125,7 @@
 
 (defn pool-closed?
   [pool]
-  (.isClosed ^com.zaxxer.hikari.HikariDataSource pool))
+  (.isClosed ^HikariDataSource pool))
 
 (defn- create-pool
   [cfg]
@@ -75,64 +133,110 @@
     (jdbc-dt/read-as-instant)
     (HikariDataSource. dsc)))
 
-(defstate pool
-  :start (create-pool cfg/config)
-  :stop (.close pool))
+(defn unwrap
+  [conn klass]
+  (.unwrap ^Connection conn klass))
+
+(defn lobj-manager
+  [conn]
+  (let [conn (unwrap conn org.postgresql.PGConnection)]
+    (.getLargeObjectAPI ^PGConnection conn)))
+
+(defn lobj-create
+  [manager]
+  (.createLO ^LargeObjectManager manager LargeObjectManager/READWRITE))
+
+(defn lobj-open
+  ([manager oid]
+   (lobj-open manager oid {}))
+  ([manager oid {:keys [mode] :or {mode :rw}}]
+   (let [mode (case mode
+                (:r :read) LargeObjectManager/READ
+                (:w :write) LargeObjectManager/WRITE
+                (:rw :read+write) LargeObjectManager/READWRITE)]
+     (.open ^LargeObjectManager manager (long oid) mode))))
+
+(defn lobj-unlink
+  [manager oid]
+  (.unlink ^LargeObjectManager manager (long oid)))
+
+(extend-type LargeObject
+  io/IOFactory
+  (make-reader [lobj opts]
+    (let [^InputStream is (.getInputStream ^LargeObject lobj)]
+      (io/make-reader is opts)))
+  (make-writer [lobj opts]
+    (let [^OutputStream os (.getOutputStream ^LargeObject lobj)]
+      (io/make-writer os opts)))
+  (make-input-stream [lobj opts]
+    (let [^InputStream is (.getInputStream ^LargeObject lobj)]
+      (io/make-input-stream is opts)))
+  (make-output-stream [lobj opts]
+    (let [^OutputStream os (.getOutputStream ^LargeObject lobj)]
+      (io/make-output-stream os opts))))
 
 (defmacro with-atomic
   [& args]
   `(jdbc/with-transaction ~@args))
 
-(defn- kebab-case [s] (str/replace s #"_" "-"))
-(defn- snake-case [s] (str/replace s #"-" "_"))
-(defn- as-kebab-maps
-  [rs opts]
-  (jdbc-opt/as-unqualified-modified-maps rs (assoc opts :label-fn kebab-case)))
-
-(defn open
-  []
+(defn ^Connection open
+  [pool]
   (jdbc/get-connection pool))
 
 (defn exec!
   ([ds sv]
    (exec! ds sv {}))
   ([ds sv opts]
-   (jdbc/execute! ds sv (assoc opts :builder-fn as-kebab-maps))))
+   (jdbc/execute! ds sv (assoc opts :builder-fn sql/as-kebab-maps))))
 
 (defn exec-one!
   ([ds sv] (exec-one! ds sv {}))
   ([ds sv opts]
-   (jdbc/execute-one! ds sv (assoc opts :builder-fn as-kebab-maps))))
-
-(def ^:private default-options
-  {:table-fn snake-case
-   :column-fn snake-case
-   :builder-fn as-kebab-maps})
+   (jdbc/execute-one! ds sv (assoc opts :builder-fn sql/as-kebab-maps))))
 
 (defn insert!
-  [ds table params]
-  (jdbc-sql/insert! ds table params default-options))
+  ([ds table params] (insert! ds table params nil))
+  ([ds table params opts]
+   (exec-one! ds
+              (sql/insert table params opts)
+              (assoc opts :return-keys true))))
+
+(defn insert-multi!
+  ([ds table cols rows] (insert-multi! ds table cols rows nil))
+  ([ds table cols rows opts]
+   (exec! ds
+          (sql/insert-multi table cols rows opts)
+          (assoc opts :return-keys true))))
 
 (defn update!
-  [ds table params where]
-  (let [opts (assoc default-options :return-keys true)]
-    (jdbc-sql/update! ds table params where opts)))
+  ([ds table params where] (update! ds table params where nil))
+  ([ds table params where opts]
+   (exec-one! ds
+              (sql/update table params where opts)
+              (assoc opts :return-keys true))))
 
 (defn delete!
-  [ds table params]
-  (let [opts (assoc default-options :return-keys true)]
-    (jdbc-sql/delete! ds table params opts)))
+  ([ds table params] (delete! ds table params nil))
+  ([ds table params opts]
+   (exec-one! ds
+              (sql/delete table params opts)
+              (assoc opts :return-keys true))))
+
+(defn- is-deleted?
+  [{:keys [deleted-at]}]
+  (and (dt/instant? deleted-at)
+       (< (inst-ms deleted-at)
+          (inst-ms (dt/now)))))
 
 (defn get-by-params
   ([ds table params]
    (get-by-params ds table params nil))
-  ([ds table params opts]
-   (let [opts (cond-> (merge default-options opts)
-                (:for-update opts)
-                (assoc :suffix "for update"))
-         res  (exec-one! ds (jdbc-bld/for-query table params opts) opts)]
-     (when (or (:deleted-at res) (not res))
-       (ex/raise :type :not-found))
+  ([ds table params {:keys [uncheked] :or {uncheked false} :as opts}]
+   (let [res (exec-one! ds (sql/select table params opts))]
+     (when (and (not uncheked) (or (not res) (is-deleted? res)))
+       (ex/raise :type :not-found
+                 :table table
+                 :hint "database object not found"))
      res)))
 
 (defn get-by-id
@@ -145,22 +249,62 @@
   ([ds table params]
    (query ds table params nil))
   ([ds table params opts]
-   (let [opts (cond-> (merge default-options opts)
-                (:for-update opts)
-                (assoc :suffix "for update"))]
-     (exec! ds (jdbc-bld/for-query table params opts) opts))))
+   (exec! ds (sql/select table params opts))))
 
 (defn pgobject?
-  [v]
-  (instance? PGobject v))
+  ([v]
+   (instance? PGobject v))
+  ([v type]
+   (and (instance? PGobject v)
+        (= type (.getType ^PGobject v)))))
 
 (defn pginterval?
   [v]
   (instance? PGInterval v))
 
+(defn pgpoint?
+  [v]
+  (instance? PGpoint v))
+
+(defn pgarray?
+  [v]
+  (instance? PgArray v))
+
+(defn pgarray-of-uuid?
+  [v]
+  (and (pgarray? v) (= "uuid" (.getBaseTypeName ^PgArray v))))
+
+(defn pgpoint
+  [p]
+  (PGpoint. (:x p) (:y p)))
+
+(defn create-array
+  [conn type objects]
+  (let [^PGConnection conn (unwrap conn org.postgresql.PGConnection)]
+    (if (coll? objects)
+      (.createArrayOf conn ^String type (into-array Object objects))
+      (.createArrayOf conn ^String type objects))))
+
+
+(defn decode-pgpoint
+  [^PGpoint v]
+  (gpt/point (.-x v) (.-y v)))
+
 (defn pginterval
   [data]
   (org.postgresql.util.PGInterval. ^String data))
+
+(defn savepoint
+  ([^Connection conn]
+   (.setSavepoint conn))
+  ([^Connection conn label]
+   (.setSavepoint conn (name label))))
+
+(defn rollback!
+  ([^Connection conn]
+   (.rollback conn))
+  ([^Connection conn ^Savepoint sp]
+   (.rollback conn sp)))
 
 (defn interval
   [data]
@@ -174,21 +318,12 @@
     (pginterval data)
 
     (dt/duration? data)
-    (->> (/ (.toMillis data) 1000.0)
+    (->> (/ (.toMillis ^java.time.Duration data) 1000.0)
          (format "%s seconds")
          (pginterval))
 
     :else
     (ex/raise :type :not-implemented)))
-
-(defn decode-pgobject
-  [^PGobject obj]
-  (let [typ (.getType obj)
-        val (.getValue obj)]
-    (if (or (= typ "json")
-            (= typ "jsonb"))
-      (json/read-str val)
-      val)))
 
 (defn decode-json-pgobject
   [^PGobject o]
@@ -196,7 +331,7 @@
         val (.getValue o)]
     (if (or (= typ "json")
             (= typ "jsonb"))
-      (json/read-str val :key-fn keyword)
+      (json/decode-str val)
       val)))
 
 (defn decode-transit-pgobject
@@ -208,24 +343,58 @@
       (t/decode-str val)
       val)))
 
+(defn inet
+  [ip-addr]
+  (doto (org.postgresql.util.PGobject.)
+    (.setType "inet")
+    (.setValue (str ip-addr))))
+
+(defn decode-inet
+  [^PGobject o]
+  (if (= "inet" (.getType o))
+    (.getValue o)
+    nil))
+
 (defn tjson
   "Encode as transit json."
   [data]
   (doto (org.postgresql.util.PGobject.)
     (.setType "jsonb")
-    (.setValue (t/encode-verbose-str data))))
+    (.setValue (t/encode-str data {:type :json-verbose}))))
 
 (defn json
   "Encode as plain json."
   [data]
   (doto (org.postgresql.util.PGobject.)
     (.setType "jsonb")
-    (.setValue (json/write-str data))))
+    (.setValue (json/encode-str data))))
 
-;; Instrumentation
+(defn pgarray->set
+  [v]
+  (set (.getArray ^PgArray v)))
 
-(mtx/instrument-with-counter!
- {:var [#'jdbc/execute-one!
-        #'jdbc/execute!]
-  :id "database__query_counter"
-  :help "An absolute counter of database queries."})
+(defn pgarray->vector
+  [v]
+  (vec (.getArray ^PgArray v)))
+
+
+;; --- Locks
+
+(defn- xact-check-param
+  [n]
+  (cond
+    (uuid? n) (uuid/get-word-high n)
+    (int? n)  n
+    :else (throw (IllegalArgumentException. "uuid or number allowed"))))
+
+(defn xact-lock!
+  [conn n]
+  (let [n (xact-check-param n)]
+    (exec-one! conn ["select pg_advisory_xact_lock(?::bigint) as lock" n])
+    true))
+
+(defn xact-try-lock!
+  [conn n]
+  (let [n   (xact-check-param n)
+        row (exec-one! conn ["select pg_try_advisory_xact_lock(?::bigint) as lock" n])]
+    (:lock row)))

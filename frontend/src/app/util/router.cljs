@@ -2,45 +2,21 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.router
   (:refer-clojure :exclude [resolve])
   (:require
+   [app.common.uri :as u]
+   [app.config :as cfg]
+   [app.util.browser-history :as bhistory]
+   [app.util.timers :as ts]
    [beicon.core :as rx]
-   [cuerdas.core :as str]
    [goog.events :as e]
    [potok.core :as ptk]
-   [reitit.core :as r]
-   [app.common.data :as d]
-   [app.util.browser-history :as bhistory]
-   [app.util.timers :as ts])
-  (:import
-   goog.Uri
-   goog.Uri.QueryData))
+   [reitit.core :as r]))
 
 ;; --- Router API
-
-(defn- parse-query-data
-  [^QueryData qdata]
-  (persistent!
-   (reduce (fn [acc key]
-             (let [values (.getValues qdata key)
-                   rkey (str/keyword key)]
-               (cond
-                 (> (alength values) 1)
-                 (assoc! acc rkey (into [] values))
-
-                 (= (alength values) 1)
-                 (assoc! acc rkey (aget values 0))
-
-                 :else
-                 acc)))
-           (transient {})
-           (.getKeys qdata))))
 
 (defn resolve
   ([router id] (resolve router id {} {}))
@@ -49,12 +25,10 @@
    (when-let [match (r/match-by-name router id params)]
      (if (empty? qparams)
        (r/match->path match)
-       (let [uri (.parse goog.Uri (r/match->path match))
-             qdt (.createFromMap QueryData (-> qparams
-                                               (d/remove-nil-vals)
-                                               (clj->js)))]
-         (.setQueryData ^js uri qdt)
-         (.toString ^js uri))))))
+       (let [query (u/map->query-string qparams)]
+         (-> (u/uri (r/match->path match))
+             (assoc :query query)
+             (str)))))))
 
 (defn create
   [routes]
@@ -67,50 +41,80 @@
     (update [_ state]
       (assoc state :router (create routes)))))
 
-(defn query-params
-  "Given goog.Uri, read query parameters into Clojure map."
-  [^goog.Uri uri]
-  (let [^js q (.getQueryData uri)]
-    (->> q
-         (.getKeys)
-         (map (juxt keyword #(.get q %)))
-         (into {}))))
-
 (defn match
   "Given routing tree and current path, return match with possibly
   coerced parameters. Return nil if no match found."
   [router path]
-  (let [uri (.parse ^js Uri path)]
-    (when-let [match (r/match-by-path router (.getPath ^js uri))]
-      (let [qparams (parse-query-data (.getQueryData ^js uri))
-            params {:path (:path-params match) :query qparams}]
-        (assoc match
-               :params params
-               :query-params qparams)))))
+  (let [uri (u/uri path)]
+    (when-let [match (r/match-by-path router (:path uri))]
+      (let [qparams (u/query-string->map (:query uri))
+            params  {:path (:path-params match)
+                     :query qparams}]
+        (-> match
+            (assoc :params params)
+            (assoc :query-params qparams))))))
 
 ;; --- Navigate (Event)
 
-(deftype Navigate [id params qparams replace]
-  ptk/EffectEvent
-  (effect [_ state stream]
-    (let [router  (:router state)
-          history (:history state)
-          path    (resolve router id params qparams)]
-      (if ^boolean replace
-        (bhistory/replace-token! history path)
-        (bhistory/set-token! history path)))))
+(defn navigated
+  [match]
+  (ptk/reify ::navigated
+    IDeref
+    (-deref [_] match)
+
+    ptk/UpdateEvent
+    (update [_ state]
+      (assoc state :route match))))
+
+(defn navigate*
+  [id params qparams replace]
+  (ptk/reify ::navigate
+    IDeref
+    (-deref [_]
+      {:id id
+       :path-params params
+       :query-params qparams
+       :replace replace})
+
+    ptk/UpdateEvent
+    (update [_ state]
+      (dissoc state :exception))
+
+    ptk/EffectEvent
+    (effect [_ state _]
+      (ts/asap
+       #(let [router  (:router state)
+              history (:history state)
+              path    (resolve router id params qparams)]
+          (if ^boolean replace
+            (bhistory/replace-token! history path)
+            (bhistory/set-token! history path)))))))
 
 (defn nav
   ([id] (nav id nil nil))
   ([id params] (nav id params nil))
-  ([id params qparams] (Navigate. id params qparams false)))
+  ([id params qparams] (navigate* id params qparams false)))
 
 (defn nav'
   ([id] (nav id nil nil))
   ([id params] (nav id params nil))
-  ([id params qparams] (Navigate. id params qparams true)))
+  ([id params qparams] (navigate* id params qparams true)))
 
 (def navigate nav)
+
+(deftype NavigateNewWindow [id params qparams]
+  ptk/EffectEvent
+  (effect [_ state _]
+    (let [router (:router state)
+          path   (resolve router id params qparams)
+          uri    (-> (u/uri cfg/public-uri)
+                     (assoc :fragment path))]
+      (js/window.open (str uri) "_blank"))))
+
+(defn nav-new-window
+  ([id] (nav-new-window id nil nil))
+  ([id params] (nav-new-window id params nil))
+  ([id params qparams] (NavigateNewWindow. id params qparams)))
 
 ;; --- History API
 
@@ -129,8 +133,8 @@
             history (:history state)
             router  (:router state)]
         (ts/schedule #(on-change router (.getToken ^js history)))
-        (->> (rx/create (fn [sink]
-                           (let [key (e/listen history "navigate" (fn [o] (sink (.-token ^js o))))]
+        (->> (rx/create (fn [subs]
+                           (let [key (e/listen history "navigate" (fn [o] (rx/push! subs (.-token ^js o))))]
                              (fn []
                                (bhistory/disable! history)
                                (e/unlistenByKey key)))))

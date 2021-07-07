@@ -2,31 +2,37 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2016 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.data.media
   (:require
-   [cljs.spec.alpha :as s]
-   [cuerdas.core :as str]
-   [beicon.core :as rx]
-   [potok.core :as ptk]
-   [app.common.spec :as us]
-   [app.common.data :as d]
+   [app.common.exceptions :as ex]
    [app.common.media :as cm]
    [app.main.data.messages :as dm]
    [app.main.store :as st]
-   [app.main.repo :as rp]
    [app.util.i18n :refer [tr]]
-   [app.util.router :as rt]
-   [app.common.uuid :as uuid]
-   [app.util.time :as ts]
-   [app.util.router :as r]
-   [app.util.files :as files]))
+   [beicon.core :as rx]
+   [cljs.spec.alpha :as s]
+   [cuerdas.core :as str]))
+
+;; --- Predicates
+
+(defn ^boolean file?
+  [o]
+  (instance? js/File o))
+
+(defn ^boolean blob?
+  [o]
+  (instance? js/Blob o))
+
 
 ;; --- Specs
 
-(s/def ::js-file #(instance? js/Blob %))
-(s/def ::js-files (s/coll-of ::js-file))
+(s/def ::blob blob?)
+(s/def ::blobs (s/coll-of ::blob))
+
+(s/def ::file file?)
+(s/def ::files (s/coll-of ::file))
 
 ;; --- Utility functions
 
@@ -34,9 +40,13 @@
   ;; Check that a file obtained with the file javascript API is valid.
   [file]
   (when (> (.-size file) cm/max-file-size)
-    (throw (ex-info (tr "errors.media-too-large") {})))
-  (when-not (contains? cm/valid-media-types (.-type file))
-    (throw (ex-info (tr "errors.media-format-unsupported") {})))
+    (ex/raise :type :validation
+              :code :media-too-large
+              :hint (str/fmt "media size is large than 5mb (size: %s)" (.-size file))))
+  (when-not (contains? cm/valid-image-types (.-type file))
+    (ex/raise :type :validation
+              :code :media-type-not-allowed
+              :hint (str/fmt "media type %s is not supported" (.-type file))))
   file)
 
 (defn notify-start-loading

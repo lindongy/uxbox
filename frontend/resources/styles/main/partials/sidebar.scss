@@ -5,7 +5,7 @@
 // Copyright (c) 2015-2020 Andrey Antukh <niwi@niwi.nz>
 // Copyright (c) 2015-2020 Juan de la Cruz <delacruzgarciajuan@gmail.com>
 
-$width-settings-bar: 15rem;
+$width-settings-bar: 16rem;
   // This width is also used in update-viewport-size at frontend/src/app/main/data/workspace.cljs
 
 .settings-bar {
@@ -16,13 +16,18 @@ $width-settings-bar: 15rem;
   position: fixed;
   right: 0;
   width: $width-settings-bar;
+
+  &.expanded {
+    width: $width-settings-bar * 3;
+  }
+
   z-index: 10;
   overflow-y: auto;
 
   &.settings-bar-left {
     border-left: none;
     border-right: 1px solid $color-gray-60;
-    left: 40px;
+    left: 48px;
   }
 
   .settings-bar-inside {
@@ -60,10 +65,11 @@ $width-settings-bar: 15rem;
 
 
     flex-direction: column;
-    padding-top: 40px;
+    padding-top: 48px;
     height: 100%;
 
     .tool-window {
+      position: relative;
       border-bottom: 1px solid $color-gray-60;
       display: flex;
       flex-direction: column;
@@ -115,6 +121,25 @@ $width-settings-bar: 15rem;
           }
         }
 
+        .tool-window-bar-icon {
+          height: 15px;
+
+          svg {
+            width: 15px;
+            height: 15px;
+          }
+        }
+
+        &.big {
+          height: 3rem;
+          padding-bottom: 1rem;
+        }
+
+        .tool-window-bar-title {
+          font-size: $fs14;
+          margin-left: 0.5rem;
+        }
+
         .tool-window-icon {
           margin-right: $small;
           display: none;
@@ -134,11 +159,12 @@ $width-settings-bar: 15rem;
           }
 
         }
-
       }
+    }
 
-
-
+    .assets-bar .tool-window {
+        flex: none;
+        height: auto;
     }
   }
 }
@@ -157,7 +183,7 @@ $width-settings-bar: 15rem;
 
   ul {
     border-left: 9px solid $color-gray-50;
-    margin: 0;
+    margin: 0 0 0 0.4rem;
 
     li {
       border-left: 1px solid $color-gray-40;
@@ -169,9 +195,8 @@ $width-settings-bar: 15rem;
     display: flex;
     flex-direction: column;
     width: 100%;
-    border-top: 1px solid transparent;
-    border-bottom: 1px solid transparent;
-
+    padding-top: 1px;
+    padding-bottom: 1px;
 
     &.open {
 
@@ -185,5 +210,22 @@ $width-settings-bar: 15rem;
         }
       }
     }
+  }
+}
+
+.element-list.pages-list {
+  max-height: 10rem;
+
+  .context-menu {
+    position: fixed;
+  }
+
+  .context-menu-items {
+    border: none;
+    margin: none;
+  }
+
+  .context-menu-action {
+    width: 100%;
   }
 }

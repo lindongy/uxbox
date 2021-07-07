@@ -2,15 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.geom.grid
   (:require
-   [app.common.math :as mth]
-   [app.common.geom.point :as gpt]))
+   [app.common.geom.point :as gpt]
+   [app.common.math :as mth]))
 
 (def ^:private default-items 12)
 
@@ -38,7 +35,7 @@
                          margin)
         gutter (if (= :stretch type) (/ (- width (* item-width size) (* margin 2)) (dec size)) gutter)
         next-x (fn [cur-val] (+ initial-offset x (* (+ item-width gutter) cur-val)))
-        next-y (fn [cur-val] y)]
+        next-y (fn [_] y)]
     [size item-width item-height next-x next-y]))
 
 (defn- calculate-row-grid
@@ -52,7 +49,7 @@
                          :center (/ (- height (* item-height size) (* gutter (dec size))) 2)
                          margin)
         gutter (if (= :stretch type) (/ (- height (* item-height size) (* margin 2)) (dec size)) gutter)
-        next-x (fn [cur-val] x)
+        next-x (fn [_] x)
         next-y (fn [cur-val] (+ initial-offset y (* (+ item-height gutter) cur-val)))]
     [size item-width item-height next-x next-y]))
 
@@ -91,8 +88,10 @@
 
 (defn grid-snap-points
   "Returns the snap points for a given grid"
-  ([shape coord] (mapcat #(grid-snap-points shape % coord) (:grids shape)))
-  ([shape {:keys [type display params] :as grid} coord]
+  ([shape coord]
+   (mapcat #(grid-snap-points shape % coord) (:grids shape)))
+
+  ([shape {:keys [type params] :as grid} coord]
    (when (:display grid)
      (case type
        :square

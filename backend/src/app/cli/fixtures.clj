@@ -2,25 +2,20 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.cli.fixtures
   "A initial fixtures."
   (:require
-   [clojure.tools.logging :as log]
-   [mount.core :as mount]
-   [sodi.pwhash :as pwhash]
-   [app.common.data :as d]
    [app.common.pages :as cp]
    [app.common.uuid :as uuid]
-   [app.config :as cfg]
    [app.db :as db]
-   [app.migrations]
-   [app.services.mutations.profile :as profile]
-   [app.util.blob :as blob]))
+   [app.main :as main]
+   [app.rpc.mutations.profile :as profile]
+   [app.util.blob :as blob]
+   [app.util.logging :as l]
+   [buddy.hashers :as hashers]
+   [integrant.core :as ig]))
 
 (defn- mk-uuid
   [prefix & args]
@@ -28,7 +23,7 @@
 
 ;; --- Profiles creation
 
-(def password (pwhash/derive "123123"))
+(def password (hashers/derive "123123"))
 
 (def preset-small
   {:num-teams 5
@@ -36,9 +31,7 @@
    :num-profiles-per-team 5
    :num-projects-per-team 5
    :num-files-per-project 5
-   :num-pages-per-file 3
-   :num-draft-files-per-profile 10
-   :num-draft-pages-per-file 3})
+   :num-draft-files-per-profile 10})
 
 (defn- rng-ids
   [rng n max]
@@ -74,202 +67,192 @@
        (#'profile/create-profile-relations conn)))
 
 (defn impl-run
-  [opts]
-  (let [rng (java.util.Random. 1)
+  [pool opts]
+  (let [rng (java.util.Random. 1)]
+    (letfn [(create-profile [conn index]
+              (let [id   (mk-uuid "profile" index)
+                    _    (l/info :action "create profile"
+                                 :index index
+                                 :id id)
 
-        create-profile
-        (fn [conn index]
-          (let [id (mk-uuid "profile" index)]
-            (log/info "create profile" id)
-            (register-profile conn
-                              {:id id
-                               :fullname (str "Profile " index)
-                               :password "123123"
-                               :demo? true
-                               :email (str "profile" index ".test@uxbox.io")})))
+                    prof (register-profile conn
+                                           {:id id
+                                            :fullname (str "Profile " index)
+                                            :password "123123"
+                                            :is-demo true
+                                            :email (str "profile" index "@example.com")})
+                    team-id  (:default-team-id prof)
+                    owner-id id]
+                (let [project-ids (collect (partial create-project conn team-id owner-id)
+                                           (range (:num-projects-per-team opts)))]
+                  (run! (partial create-files conn owner-id) project-ids))
+                prof))
 
-        create-profiles
-        (fn [conn]
-          (log/info "create profiles")
-          (collect (partial create-profile conn)
-                   (range (:num-profiles opts))))
+            (create-profiles [conn]
+              (l/info :action "create profiles")
+              (collect (partial create-profile conn)
+                       (range (:num-profiles opts))))
 
-        create-team
-        (fn [conn index]
-          (let [id (mk-uuid "team" index)
-                name (str "Team" index)]
-            (log/info "create team" id)
-            (db/insert! conn :team {:id id
-                                    :name name
-                                    :photo ""})
-            id))
+            (create-team [conn index]
+              (let [id (mk-uuid "team" index)
+                    name (str "Team" index)]
+                (l/info :action "create team"
+                        :index index
+                        :id id)
+                (db/insert! conn :team {:id id
+                                        :name name})
+                id))
 
-        create-teams
-        (fn [conn]
-          (log/info "create teams")
-          (collect (partial create-team conn)
-                   (range (:num-teams opts))))
+            (create-teams [conn]
+              (l/info :action "create teams")
+              (collect (partial create-team conn)
+                       (range (:num-teams opts))))
 
-        create-page
-        (fn [conn owner-id project-id file-id index]
-          (let [id (mk-uuid "page" project-id file-id index)
-                data cp/default-page-data
-                name (str "page " index)
-                version 0
-                ordering index
-                data (blob/encode data)]
-            (log/info "create page" id)
-            (db/insert! conn :page
-                        {:id id
-                         :file-id file-id
-                         :name name
-                         :ordering ordering
-                         :data data})))
+            (create-file [conn owner-id project-id index]
+              (let [id (mk-uuid "file" project-id index)
+                    name (str "file" index)
+                    data (cp/make-file-data id)]
+                (l/info :action "create file"
+                        :index index
+                        :id id)
+                (db/insert! conn :file
+                            {:id id
+                             :data (blob/encode data)
+                             :project-id project-id
+                             :name name})
+                (db/insert! conn :file-profile-rel
+                            {:file-id id
+                             :profile-id owner-id
+                             :is-owner true
+                             :is-admin true
+                             :can-edit true})
+                id))
 
-        create-pages
-        (fn [conn owner-id project-id file-id]
-          (log/info "create pages")
-          (run! (partial create-page conn owner-id project-id file-id)
-                (range (:num-pages-per-file opts))))
+            (create-files [conn owner-id project-id]
+              (l/info :action "create files")
+              (run! (partial create-file conn owner-id project-id)
+                    (range (:num-files-per-project opts))))
 
-        create-file
-        (fn [conn owner-id project-id index]
-          (let [id (mk-uuid "file" project-id index)
-                name (str "file" index)]
-            (log/info "create file" id)
-            (db/insert! conn :file
-                        {:id id
-                         :project-id project-id
-                         :name name})
-            (db/insert! conn :file-profile-rel
-                        {:file-id id
-                         :profile-id owner-id
-                         :is-owner true
-                         :is-admin true
-                         :can-edit true})
-            id))
+            (create-project [conn team-id owner-id index]
+              (let [id        (if index
+                                (mk-uuid "project" team-id index)
+                                (mk-uuid "project" team-id))
+                    name      (if index
+                                (str "project " index)
+                                "Drafts")
+                    is-default (nil? index)]
+                (l/info :action "create project"
+                        :index index
+                        :id id)
+                (db/insert! conn :project
+                            {:id id
+                             :team-id team-id
+                             :is-default is-default
+                             :name name})
+                (db/insert! conn :project-profile-rel
+                            {:project-id id
+                             :profile-id owner-id
+                             :is-owner true
+                             :is-admin true
+                             :can-edit true})
+                id))
 
-        create-files
-        (fn [conn owner-id project-id]
-          (log/info "create files")
-          (let [file-ids (collect (partial create-file conn owner-id project-id)
-                                  (range (:num-files-per-project opts)))]
-            (run! (partial create-pages conn owner-id project-id) file-ids)))
+            (create-projects [conn team-id profile-ids]
+              (l/info :action "create projects")
+              (let [owner-id (rng-nth rng profile-ids)
+                    project-ids (conj
+                                  (collect (partial create-project conn team-id owner-id)
+                                         (range (:num-projects-per-team opts)))
+                                  (create-project conn team-id owner-id nil))]
+                (run! (partial create-files conn owner-id) project-ids)))
 
-        create-project
-        (fn [conn team-id owner-id index]
-          (let [id (mk-uuid "project" team-id index)
-                name (str "project " index)]
-            (log/info "create project" id)
-            (db/insert! conn :project
-                        {:id id
-                         :team-id team-id
-                         :name name})
-            (db/insert! conn :project-profile-rel
-                        {:project-id id
-                         :profile-id owner-id
-                         :is-owner true
-                         :is-admin true
-                         :can-edit true})
-            id))
+            (assign-profile-to-team [conn team-id owner? profile-id]
+              (db/insert! conn :team-profile-rel
+                          {:team-id team-id
+                           :profile-id profile-id
+                           :is-owner owner?
+                           :is-admin true
+                           :can-edit true}))
 
-        create-projects
-        (fn [conn team-id profile-ids]
-          (log/info "create projects")
-          (let [owner-id (rng-nth rng profile-ids)
-                project-ids (collect (partial create-project conn team-id owner-id)
-                                     (range (:num-projects-per-team opts)))]
-            (run! (partial create-files conn owner-id) project-ids)))
+            (setup-team [conn team-id profile-ids]
+              (l/info :action "setup team"
+                      :team-id team-id
+                      :profile-ids (pr-str profile-ids))
+              (assign-profile-to-team conn team-id true (first profile-ids))
+              (run! (partial assign-profile-to-team conn team-id false)
+                    (rest profile-ids))
+              (create-projects conn team-id profile-ids))
 
-        assign-profile-to-team
-        (fn [conn team-id owner? profile-id]
-          (db/insert! conn :team-profile-rel
-                      {:team-id team-id
-                       :profile-id profile-id
-                       :is-owner owner?
-                       :is-admin true
-                       :can-edit true}))
+            (assign-teams-and-profiles [conn teams profiles]
+              (l/info :action "assign teams and profiles")
+              (loop [team-id (first teams)
+                     teams (rest teams)]
+                (when-not (nil? team-id)
+                  (let [n-profiles-team (:num-profiles-per-team opts)
+                        selected-profiles (rng-vec rng profiles n-profiles-team)]
+                    (setup-team conn team-id selected-profiles)
+                    (recur (first teams)
+                           (rest teams))))))
 
-        setup-team
-        (fn [conn team-id profile-ids]
-          (log/info "setup team" team-id profile-ids)
-          (assign-profile-to-team conn team-id true (first profile-ids))
-          (run! (partial assign-profile-to-team conn team-id false)
-                (rest profile-ids))
-          (create-projects conn team-id profile-ids))
+            (create-draft-file [conn owner index]
+              (let [owner-id   (:id owner)
+                    id         (mk-uuid "file" "draft" owner-id index)
+                    name       (str "file" index)
+                    project-id (:default-project-id owner)
+                    data       (cp/make-file-data id)]
 
-        assign-teams-and-profiles
-        (fn [conn teams profiles]
-          (log/info "assign teams and profiles")
-          (loop [team-id (first teams)
-                 teams (rest teams)]
-            (when-not (nil? team-id)
-              (let [n-profiles-team (:num-profiles-per-team opts)
-                    selected-profiles (rng-vec rng profiles n-profiles-team)]
-                (setup-team conn team-id selected-profiles)
-                (recur (first teams)
-                       (rest teams))))))
+                (l/info :action "create draft file"
+                        :index index
+                        :id id)
+                (db/insert! conn :file
+                            {:id id
+                             :data (blob/encode data)
+                             :project-id project-id
+                             :name name})
+                (db/insert! conn :file-profile-rel
+                            {:file-id id
+                             :profile-id owner-id
+                             :is-owner true
+                             :is-admin true
+                             :can-edit true})
+                id))
 
+            (create-draft-files [conn profile]
+              (run! (partial create-draft-file conn profile)
+                    (range (:num-draft-files-per-profile opts))))
+            ]
+      (db/with-atomic [conn pool]
+        (let [profiles (create-profiles conn)
+              teams    (create-teams conn)]
+          (assign-teams-and-profiles conn teams (map :id profiles))
+          (run! (partial create-draft-files conn) profiles))))))
 
-        create-draft-pages
-        (fn [conn owner-id file-id]
-          (log/info "create draft pages")
-          (run! (partial create-page conn owner-id nil file-id)
-                (range (:num-draft-pages-per-file opts))))
-
-        create-draft-file
-        (fn [conn owner index]
-          (let [owner-id (:id owner)
-                id (mk-uuid "file" "draft" owner-id index)
-                name (str "file" index)
-                project-id (:default-project-id owner)]
-            (log/info "create draft file" id)
-            (db/insert! conn :file
-                        {:id id
-                         :project-id project-id
-                         :name name})
-            (db/insert! conn :file-profile-rel
-                        {:file-id id
-                         :profile-id owner-id
-                         :is-owner true
-                         :is-admin true
-                         :can-edit true})
-            id))
-
-        create-draft-files
-        (fn [conn profile]
-          (let [file-ids (collect (partial create-draft-file conn profile)
-                                    (range (:num-draft-files-per-profile opts)))]
-            (run! (partial create-draft-pages conn (:id profile)) file-ids)))
-        ]
-
-    (db/with-atomic [conn db/pool]
-      (let [profiles (create-profiles conn)
-            teams    (create-teams conn)]
-        (assign-teams-and-profiles conn teams (map :id profiles))
-        (run! (partial create-draft-files conn) profiles)))))
-
-(defn run*
-  [preset]
-  (let [preset (if (map? preset)
+(defn run-in-system
+  [system preset]
+  (let [pool   (:app.db/pool system)
+        preset (if (map? preset)
                  preset
                  (case preset
                    (nil "small" :small) preset-small
                    ;; "medium" preset-medium
                    ;; "big" preset-big
                    preset-small))]
-    (impl-run preset)))
+    (impl-run pool preset)))
 
 (defn run
-  [{:keys [preset]
-    :or {preset :small}}]
-  (try
-    (-> (mount/only #{#'app.config/config
-                      #'app.db/pool
-                      #'app.migrations/migrations})
-        (mount/start))
-    (run* preset)
-    (catch Exception e
-      (log/errorf e "Unhandled exception."))
-    (finally
-      (mount/stop))))
+  [{:keys [preset] :or {preset :small}}]
+  (let [config (select-keys main/system-config
+                            [:app.db/pool
+                             :app.telemetry/migrations
+                             :app.migrations/migrations
+                             :app.migrations/all
+                             :app.metrics/metrics])
+        _      (ig/load-namespaces config)
+        system (-> (ig/prep config)
+                   (ig/init))]
+    (try
+      (run-in-system system preset)
+      (catch Exception e
+        (l/error :hint "unhandled exception" :cause e))
+      (finally
+        (ig/halt! system)))))

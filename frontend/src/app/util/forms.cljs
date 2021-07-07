@@ -2,42 +2,22 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.forms
   (:refer-clojure :exclude [uuid])
   (:require
-   [beicon.core :as rx]
-   [cljs.spec.alpha :as s]
-   [cuerdas.core :as str]
-   [potok.core :as ptk]
-   [rumext.alpha :as mf]
    [app.common.spec :as us]
    [app.util.dom :as dom]
-   [app.util.i18n :refer [tr]]))
+   [app.util.i18n :refer [tr]]
+   [cljs.spec.alpha :as s]
+   [cuerdas.core :as str]
+   [rumext.alpha :as mf]))
 
 ;; --- Handlers Helpers
 
-(defn- impl-mutator
-  [v update-fn]
-  (specify v
-    IReset
-    (-reset! [_ new-value]
-      (update-fn new-value))
-
-    ISwap
-    (-swap!
-      ([self f] (update-fn f))
-      ([self f x] (update-fn #(f % x)))
-      ([self f x y] (update-fn #(f % x y)))
-      ([self f x y more] (update-fn #(apply f % x y more))))))
-
 (defn- interpret-problem
-  [acc {:keys [path pred val via in] :as problem}]
-  ;; (prn "interpret-problem" problem)
+  [acc {:keys [path pred via] :as problem}]
   (cond
     (and (empty? path)
          (list? pred)
@@ -45,51 +25,106 @@
     (let [path (conj path (last (last pred)))]
       (assoc-in acc path {:code ::missing :type :builtin}))
 
-    (and (not (empty? path))
-         (not (empty? via)))
+    (and (seq path)
+         (seq via))
     (assoc-in acc path {:code (last via) :type :builtin})
 
     :else acc))
 
+(declare create-form-mutator)
+
 (defn use-form
-  [& {:keys [spec validators initial]}]
-  (let [[state update-state] (mf/useState {:data (if (fn? initial) (initial) initial)
-                                           :errors {}
-                                           :touched {}})
+  [& {:keys [initial] :as opts}]
+  (let [state      (mf/useState 0)
+        render     (aget state 1)
+        state-ref  (mf/use-ref {:data (if (fn? initial) (initial) initial)
+                                :errors {}
+                                :touched {}})
+        form       (mf/use-memo #(create-form-mutator state-ref render opts))]
 
-        cleaned  (s/conform spec (:data state))
-        problems (when (= ::s/invalid cleaned)
-                   (::s/problems (s/explain-data spec (:data state))))
+    (mf/use-effect
+     (mf/deps initial)
+     (fn []
+       (if (fn? initial)
+         (swap! form update :data merge (initial))
+         (swap! form update :data merge initial))))
 
-        errors   (merge (reduce interpret-problem {} problems)
-                        (reduce (fn [errors vf]
-                                  (merge errors (vf (:data state))))
-                                {} validators)
-                        (:errors state))]
-    (-> (assoc state
-               :errors errors
-               :clean-data (when (not= cleaned ::s/invalid) cleaned)
-               :valid (and (empty? errors)
-                           (not= cleaned ::s/invalid)))
-        (impl-mutator update-state))))
+    form))
+
+(defn- wrap-update-fn
+  [f {:keys [spec validators]}]
+  (fn [& args]
+    (let [state    (apply f args)
+          cleaned  (s/conform spec (:data state))
+          problems (when (= ::s/invalid cleaned)
+                     (::s/problems (s/explain-data spec (:data state))))
+
+          errors   (merge (reduce interpret-problem {} problems)
+                          (reduce (fn [errors vf]
+                                    (merge errors (vf (:data state))))
+                                  {} validators)
+                          (:errors state))]
+
+      (assoc state
+             :errors errors
+             :clean-data (when (not= cleaned ::s/invalid) cleaned)
+             :valid (and (empty? errors)
+                         (not= cleaned ::s/invalid))))))
+
+(defn- create-form-mutator
+  [state-ref render opts]
+  (reify
+    IDeref
+    (-deref [_]
+      (mf/ref-val state-ref))
+
+    IReset
+    (-reset! [it new-value]
+      (mf/set-ref-val! state-ref new-value)
+      (render inc))
+
+    ISwap
+    (-swap! [self f]
+      (let [f (wrap-update-fn f opts)]
+        (mf/set-ref-val! state-ref (f (mf/ref-val state-ref)))
+        (render inc)))
+
+
+    (-swap! [self f x]
+      (let [f (wrap-update-fn f opts)]
+        (mf/set-ref-val! state-ref (f (mf/ref-val state-ref) x))
+        (render inc)))
+
+
+    (-swap! [self f x y]
+      (let [f (wrap-update-fn f opts)]
+        (mf/set-ref-val! state-ref (f (mf/ref-val state-ref) x y))
+        (render inc)))
+
+    (-swap! [self f x y more]
+      (let [f (wrap-update-fn f opts)]
+        (mf/set-ref-val! state-ref (apply f (mf/ref-val state-ref) x y more))
+        (render inc)))))
 
 (defn on-input-change
-  ([{:keys [data] :as form} field]
+  ([form field]
    (on-input-change form field false))
-
-  ([{:keys [data] :as form} field trim?]
+  ([form field trim?]
   (fn [event]
     (let [target (dom/get-target event)
-          value (dom/get-value target)]
+          value  (if (or (= (.-type target) "checkbox")
+                         (= (.-type target) "radio"))
+                   (.-checked target)
+                   (dom/get-value target))]
       (swap! form (fn [state]
                     (-> state
                         (assoc-in [:data field] (if trim? (str/trim value) value))
                         (update :errors dissoc field))))))))
 
 (defn on-input-blur
-  [{:keys [touched] :as form} field]
-  (fn [event]
-    (let [target (dom/get-target event)]
+  [form field]
+  (fn [_]
+    (let [touched (get @form :touched)]
       (when-not (get touched field)
         (swap! form assoc-in [:touched field] true)))))
 
@@ -97,9 +132,8 @@
 
 (mf/defc field-error
   [{:keys [form field type]
-    :or {only (constantly true)}
     :as props}]
-  (let [{:keys [code message] :as error} (get-in form [:errors field])
+  (let [{:keys [message] :as error} (get-in form [:errors field])
         touched? (get-in form [:touched field])
         show? (and touched? error message
                    (cond

@@ -1,22 +1,31 @@
+;; This Source Code Form is subject to the terms of the Mozilla Public
+;; License, v. 2.0. If a copy of the MPL was not distributed with this
+;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+;;
+;; Copyright (c) UXBOX Labs SL
+
 (ns app.main.ui.dashboard.grid
   (:require
-   [cuerdas.core :as str]
-   [beicon.core :as rx]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]
-   [app.main.data.dashboard :as dsh]
-   [app.main.store :as st]
-   [app.main.ui.modal :as modal]
-   [app.main.ui.keyboard :as kbd]
-   [app.main.ui.confirm :refer [confirm-dialog]]
-   [app.main.ui.components.context-menu :refer [context-menu]]
-   [app.main.worker :as wrk]
+   [app.common.math :as mth]
+   [app.main.data.dashboard :as dd]
+   [app.main.data.messages :as dm]
    [app.main.fonts :as fonts]
+   [app.main.refs :as refs]
+   [app.main.store :as st]
+   [app.main.ui.dashboard.file-menu :refer [file-menu]]
+   [app.main.ui.dashboard.import :refer [use-import-file]]
+   [app.main.ui.dashboard.inline-edition :refer [inline-edition]]
+   [app.main.ui.icons :as i]
+   [app.main.worker :as wrk]
    [app.util.dom :as dom]
-   [app.util.i18n :as i18n :refer [t tr]]
-   [app.util.router :as rt]
+   [app.util.dom.dnd :as dnd]
+   [app.util.i18n :as i18n :refer [tr]]
+   [app.util.keyboard :as kbd]
+   [app.util.time :as dt]
    [app.util.timers :as ts]
-   [app.util.time :as dt]))
+   [app.util.webapi :as wapi]
+   [beicon.core :as rx]
+   [rumext.alpha :as mf]))
 
 ;; --- Grid Item Thumbnail
 
@@ -25,15 +34,15 @@
   [{:keys [file] :as props}]
   (let [container (mf/use-ref)]
     (mf/use-effect
-     (mf/deps file)
+     (mf/deps (:id file))
      (fn []
-       (-> (wrk/ask! {:cmd :thumbnails/generate
-                      :id (first (:pages file))
-                      })
-           (rx/subscribe (fn [{:keys [svg fonts]}]
-                           (run! fonts/ensure-loaded! fonts)
-                           (when-let [node (mf/ref-val container)]
-                             (set! (.-innerHTML ^js node) svg)))))))
+       (->> (wrk/ask! {:cmd :thumbnails/generate
+                       :file-id (:id file)
+                       :page-id (get-in file [:data :pages 0])})
+            (rx/subs (fn [{:keys [svg fonts]}]
+                       (run! fonts/ensure-loaded! fonts)
+                       (when-let [node (mf/ref-val container)]
+                         (set! (.-innerHTML ^js node) svg)))))))
     [:div.grid-item-th {:style {:background-color (get-in file [:data :options :background])}
                         :ref container}]))
 
@@ -41,114 +50,368 @@
 
 (mf/defc grid-item-metadata
   [{:keys [modified-at]}]
-  (let [locale (i18n/use-locale)
-        time (dt/timeago modified-at {:locale locale})]
-    (str (t locale "ds.updated-at" time))))
+  (let [locale (mf/deref i18n/locale)
+        time   (dt/timeago modified-at {:locale locale})]
+    (str (tr "ds.updated-at" time))))
+
+(defn create-counter-element
+  [_element file-count]
+  (let [counter-el (dom/create-element "div")]
+    (dom/set-property! counter-el "class" "drag-counter")
+    (dom/set-text! counter-el (str file-count))
+    counter-el))
 
 (mf/defc grid-item
   {:wrap [mf/memo]}
-  [{:keys [file] :as props}]
-  (let [local (mf/use-state {:menu-open false
-                             :edition false})
-        locale (i18n/use-locale)
-        on-navigate #(st/emit! (rt/nav :workspace
-                                       {:project-id (:project-id file)
-                                        :file-id (:id file)}
-                                       {:page-id (first (:pages file))}))
-        delete-fn #(st/emit! nil (dsh/delete-file (:id file)))
-        on-delete #(do
-                     (dom/stop-propagation %)
-                     (modal/show! confirm-dialog {:on-accept delete-fn}))
+  [{:keys [file navigate?] :as props}]
+  (let [file-id        (:id file)
+        local          (mf/use-state {:menu-open false
+                                      :menu-pos nil
+                                      :edition false})
+        selected-files (mf/deref refs/dashboard-selected-files)
+        item-ref       (mf/use-ref)
+        menu-ref       (mf/use-ref)
+        selected?      (contains? selected-files file-id)
 
-        add-shared-fn #(st/emit! nil (dsh/set-file-shared (:id file) true))
-        on-add-shared
-        #(do
-           (dom/stop-propagation %)
-           (modal/show! confirm-dialog
-                        {:message (t locale "dashboard.grid.add-shared-message" (:name file))
-                         :hint (t locale "dashboard.grid.add-shared-hint")
-                         :accept-text (t locale "dashboard.grid.add-shared-accept")
-                         :not-danger? true
-                         :on-accept add-shared-fn}))
+        on-menu-close
+        (mf/use-callback
+          #(swap! local assoc :menu-open false))
 
-        remove-shared-fn #(st/emit! nil (dsh/set-file-shared (:id file) false))
-        on-remove-shared
-        #(do
-           (dom/stop-propagation %)
-           (modal/show! confirm-dialog
-                        {:message (t locale "dashboard.grid.remove-shared-message" (:name file))
-                         :hint (t locale "dashboard.grid.remove-shared-hint")
-                         :accept-text (t locale "dashboard.grid.remove-shared-accept")
-                         :not-danger? false
-                         :on-accept remove-shared-fn}))
+        on-select
+        (fn [event]
+          (when (and (or (not selected?) (> (count selected-files) 1))
+                     (not (:menu-open @local)))
+            (dom/stop-propagation event)
+            (let [shift? (kbd/shift? event)]
+              (when-not shift?
+                (st/emit! (dd/clear-selected-files)))
+              (st/emit! (dd/toggle-file-select file)))))
 
-        on-blur #(let [name (-> % dom/get-target dom/get-value)]
-                   (st/emit! (dsh/rename-file (:id file) name))
-                   (swap! local assoc :edition false))
+        on-navigate
+        (mf/use-callback
+         (mf/deps file)
+         (fn [event]
+           (let [menu-icon (mf/ref-val menu-ref)
+                 target    (dom/get-target event)]
+             (when-not (dom/child? target menu-icon)
+               (st/emit! (dd/go-to-workspace file))))))
 
-        on-key-down #(cond
-                       (kbd/enter? %) (on-blur %)
-                       (kbd/esc? %) (swap! local assoc :edition false))
-        on-menu-click #(do
-                         (dom/stop-propagation %)
-                         (swap! local assoc :menu-open true))
-        on-menu-close #(swap! local assoc :menu-open false)
-        on-edit #(do
-                   (dom/stop-propagation %)
-                   (swap! local assoc :edition true))]
-    [:div.grid-item.project-th {:on-click on-navigate}
+        on-drag-start
+        (mf/use-callback
+          (mf/deps selected-files)
+          (fn [event]
+            (let [offset          (dom/get-offset-position (.-nativeEvent event))
+
+                  select-current? (not (contains? selected-files (:id file)))
+
+                  item-el         (mf/ref-val item-ref)
+                  counter-el      (create-counter-element item-el
+                                                          (if select-current?
+                                                            1
+                                                            (count selected-files)))]
+              (when select-current?
+                (st/emit! (dd/clear-selected-files))
+                (st/emit! (dd/toggle-file-select file)))
+
+              (dnd/set-data! event "penpot/files" "dummy")
+              (dnd/set-allowed-effect! event "move")
+
+              ;; set-drag-image requires that the element is rendered and
+              ;; visible to the user at the moment of creating the ghost
+              ;; image (to make a snapshot), but you may remove it right
+              ;; afterwards, in the next render cycle.
+              (dom/append-child! item-el counter-el)
+              (dnd/set-drag-image! event item-el (:x offset) (:y offset))
+              (ts/raf #(.removeChild ^js item-el counter-el)))))
+
+        on-menu-click
+        (mf/use-callback
+         (mf/deps file selected?)
+         (fn [event]
+           (dom/prevent-default event)
+           (when-not selected?
+             (let [shift? (kbd/shift? event)]
+               (when-not shift?
+                 (st/emit! (dd/clear-selected-files)))
+               (st/emit! (dd/toggle-file-select file))))
+           (let [position (dom/get-client-position event)]
+             (swap! local assoc
+                    :menu-open true
+                    :menu-pos position))))
+
+        edit
+        (mf/use-callback
+         (mf/deps file)
+         (fn [name]
+           (st/emit! (dd/rename-file (assoc file :name name)))
+           (swap! local assoc :edition false)))
+
+        on-edit
+        (mf/use-callback
+         (mf/deps file)
+         (fn [event]
+           (dom/stop-propagation event)
+           (swap! local assoc
+                  :edition true
+                  :menu-open false)))]
+
+    (mf/use-effect
+     (mf/deps selected? local)
+     (fn []
+       (when (and (not selected?) (:menu-open @local))
+         (swap! local assoc :menu-open false))))
+
+    [:div.grid-item.project-th
+     {:class (dom/classnames :selected selected?)
+      :ref item-ref
+      :draggable true
+      :on-click on-select
+      :on-double-click on-navigate
+      :on-drag-start on-drag-start
+      :on-context-menu on-menu-click}
+
      [:div.overlay]
      [:& grid-item-thumbnail {:file file}]
      (when (:is-shared file)
-       [:div.item-badge
-         i/library])
+       [:div.item-badge i/library])
      [:div.item-info
       (if (:edition @local)
-        [:input.element-name {:type "text"
-                              :auto-focus true
-                              :on-key-down on-key-down
-                              :on-blur on-blur
-                              :default-value (:name file)}]
+        [:& inline-edition {:content (:name file)
+                            :on-end edit}]
         [:h3 (:name file)])
       [:& grid-item-metadata {:modified-at (:modified-at file)}]]
      [:div.project-th-actions {:class (dom/classnames
                                        :force-display (:menu-open @local))}
-      ;; [:div.project-th-icon.pages
-      ;;  i/page
-      ;;  #_[:span (:total-pages project)]]
-      ;; [:div.project-th-icon.comments
-      ;;  i/chat
-      ;;  [:span "0"]]
       [:div.project-th-icon.menu
-       {:on-click on-menu-click}
-       i/actions]
-      [:& context-menu {:on-close on-menu-close
-                        :show (:menu-open @local)
-                        :options [[(t locale "dashboard.grid.rename") on-edit]
-                                  [(t locale "dashboard.grid.delete") on-delete]
-                                  (if (:is-shared file)
-                                     [(t locale "dashboard.grid.remove-shared") on-remove-shared]
-                                     [(t locale "dashboard.grid.add-shared") on-add-shared])]}]]]))
+       {:ref menu-ref
+        :on-click on-menu-click}
+       i/actions
+       (when selected?
+         [:& file-menu {:files (vals selected-files)
+                        :show? (:menu-open @local)
+                        :left (+ 24 (:x (:menu-pos @local)))
+                        :top (:y (:menu-pos @local))
+                        :navigate? navigate?
+                        :on-edit on-edit
+                        :on-menu-close on-menu-close}])]]]))
 
-;; --- Grid
+(mf/defc empty-placeholder
+  [{:keys [dragging?] :as props}]
+  (if-not dragging?
+    [:div.grid-empty-placeholder
+     [:div.icon i/file-html]
+     [:div.text (tr "dashboard.empty-files")]]
+    [:div.grid-row.no-wrap
+     [:div.grid-item]]))
+
+(mf/defc loading-placeholder
+  []
+  [:div.grid-empty-placeholder
+   [:div.icon i/loader]
+   [:div.text (tr "dashboard.loading-files")]])
 
 (mf/defc grid
-  [{:keys [id opts files hide-new?] :as props}]
-  (let [locale (i18n/use-locale)
-        order (:order opts :modified)
-        filter (:filter opts "")
-        on-click #(do
-                    (dom/prevent-default %)
-                    (st/emit! (dsh/create-file id)))]
-    [:section.dashboard-grid
-      (if (> (count files) 0)
-        [:div.dashboard-grid-row
-         (when (not hide-new?)
-           [:div.grid-item.add-file {:on-click on-click}
-            [:span (tr "ds.new-file")]])
-         (for [item files]
-           [:& grid-item {:file item :key (:id item)}])]
-        [:div.grid-files-empty
-         [:div.grid-files-desc (t locale "dashboard.grid.empty-files")]
-         [:div.grid-files-link
-          [:a.btn-secondary.btn-small {:on-click on-click} (t locale "ds.new-file")]]])]))
+  [{:keys [files project-id] :as props}]
+  (let [dragging? (mf/use-state false)
+
+        on-finish-import
+        (mf/use-callback
+         (fn []
+           (st/emit! (dd/fetch-files {:project-id project-id})
+                     (dd/clear-selected-files))))
+
+        import-files (use-import-file project-id on-finish-import)
+
+        on-drag-enter
+        (mf/use-callback
+         (fn [e]
+           (when (or (dnd/has-type? e "Files")
+                     (dnd/has-type? e "application/x-moz-file"))
+             (dom/prevent-default e)
+             (reset! dragging? true))))
+
+        on-drag-over
+        (mf/use-callback
+         (fn [e]
+           (when (or (dnd/has-type? e "Files")
+                     (dnd/has-type? e "application/x-moz-file"))
+             (dom/prevent-default e))))
+
+        on-drag-leave
+        (mf/use-callback
+         (fn [e]
+           (when-not (dnd/from-child? e)
+             (reset! dragging? false))))
+
+
+        on-drop
+        (mf/use-callback
+         (fn [e]
+           (when (or (dnd/has-type? e "Files")
+                     (dnd/has-type? e "application/x-moz-file"))
+             (dom/prevent-default e)
+             (reset! dragging? false)
+             (import-files (.-files (.-dataTransfer e))))))]
+
+    [:section.dashboard-grid {:on-drag-enter on-drag-enter
+                              :on-drag-over on-drag-over
+                              :on-drag-leave on-drag-leave
+                              :on-drop on-drop}
+     (cond
+       (nil? files)
+       [:& loading-placeholder]
+
+       (seq files)
+       [:div.grid-row
+        (when @dragging?
+          [:div.grid-item])
+        (for [item files]
+          [:& grid-item
+           {:file item
+            :key (:id item)
+            :navigate? true}])]
+
+       :else
+       [:& empty-placeholder])]))
+
+(mf/defc line-grid-row
+  [{:keys [files selected-files on-load-more dragging?] :as props}]
+  (let [rowref           (mf/use-ref)
+
+        width            (mf/use-state nil)
+
+        itemsize       290
+        ratio          (if (some? @width) (/ @width itemsize) 0)
+        nitems         (mth/floor ratio)
+        limit          (min 10 ;; Configuration in backend to return recent files
+                            (if (and (some? @width)
+                                     (> (* itemsize (count files)) @width)
+                                     (< (- ratio nitems) 0.51))
+                              (dec nitems) ;; Leave space for the "show all" block
+                              nitems))
+
+        limit          (if dragging?
+                         (dec limit)
+                         limit)
+
+        limit          (max 1 limit)]
+
+    (mf/use-effect
+      (fn []
+        (let [node (mf/ref-val rowref)
+              mnt? (volatile! true)
+              sub  (->> (wapi/observe-resize node)
+                        (rx/observe-on :af)
+                        (rx/subs (fn [entries]
+                                   (let [row (first entries)
+                                         row-rect (.-contentRect ^js row)
+                                         row-width (.-width ^js row-rect)]
+                                     (when @mnt?
+                                       (reset! width row-width))))))]
+          (fn []
+            (vreset! mnt? false)
+            (rx/dispose! sub)))))
+
+    [:div.grid-row.no-wrap {:ref rowref}
+     (when dragging?
+       [:div.grid-item])
+     (for [item (take limit files)]
+       [:& grid-item
+        {:id (:id item)
+         :file item
+         :selected-files selected-files
+         :key (:id item)
+         :navigate? false}])
+     (when (and (> limit 0)
+                (> (count files) limit))
+       [:div.grid-item.placeholder {:on-click on-load-more}
+        [:div.placeholder-icon i/arrow-down]
+        [:div.placeholder-label
+         (tr "dashboard.show-all-files")]])]))
+
+(mf/defc line-grid
+  [{:keys [project-id team-id files on-load-more] :as props}]
+  (let [dragging?        (mf/use-state false)
+        selected-files   (mf/deref refs/dashboard-selected-files)
+        selected-project (mf/deref refs/dashboard-selected-project)
+
+        on-finish-import
+        (mf/use-callback
+         (fn []
+           (st/emit! (dd/fetch-recent-files)
+                     (dd/clear-selected-files))))
+
+        import-files (use-import-file project-id on-finish-import)
+
+        on-drag-enter
+        (mf/use-callback
+          (mf/deps selected-project)
+          (fn [e]
+            (when (dnd/has-type? e "penpot/files")
+              (dom/prevent-default e)
+              (when-not (or (dnd/from-child? e)
+                            (dnd/broken-event? e))
+                (when (not= selected-project project-id)
+                  (reset! dragging? true))))
+
+            (when (or (dnd/has-type? e "Files")
+                      (dnd/has-type? e "application/x-moz-file"))
+              (dom/prevent-default e)
+              (reset! dragging? true))))
+
+        on-drag-over
+        (mf/use-callback
+         (fn [e]
+           (when (or (dnd/has-type? e "penpot/files")
+                     (dnd/has-type? e "Files")
+                     (dnd/has-type? e "application/x-moz-file"))
+             (dom/prevent-default e))))
+
+        on-drag-leave
+        (mf/use-callback
+          (fn [e]
+            (when-not (dnd/from-child? e)
+              (reset! dragging? false))))
+
+        on-drop-success
+        (fn []
+          (st/emit! (dm/success (tr "dashboard.success-move-file"))
+                    (dd/fetch-recent-files)
+                    (dd/clear-selected-files)))
+
+        on-drop
+        (mf/use-callback
+          (mf/deps files selected-files)
+          (fn [e]
+            (when (or (dnd/has-type? e "Files")
+                      (dnd/has-type? e "application/x-moz-file"))
+              (dom/prevent-default e)
+              (reset! dragging? false)
+              (import-files (.-files (.-dataTransfer e))))
+
+            (when (dnd/has-type? e "penpot/files")
+              (reset! dragging? false)
+              (when (not= selected-project project-id)
+                (let [data  {:ids (into #{} (keys selected-files))
+                             :project-id project-id}
+                      mdata {:on-success on-drop-success}]
+                  (st/emit! (dd/move-files (with-meta data mdata))))))))]
+
+    [:section.dashboard-grid {:on-drag-enter on-drag-enter
+                              :on-drag-over on-drag-over
+                              :on-drag-leave on-drag-leave
+                              :on-drop on-drop}
+     (cond
+       (nil? files)
+       [:& loading-placeholder]
+
+       (seq files)
+       [:& line-grid-row {:files files
+                          :team-id team-id
+                          :selected-files selected-files
+                          :on-load-more on-load-more
+                          :dragging? @dragging?}]
+
+       :else
+       [:& empty-placeholder {:dragging? @dragging?}])]))
+

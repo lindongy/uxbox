@@ -2,49 +2,67 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.repo
   (:require
-   [beicon.core :as rx]
-   [cuerdas.core :as str]
+   [app.common.data :as d]
+   [app.common.uri :as u]
    [app.config :as cfg]
-   [app.util.http-api :as http]))
+   [app.util.http :as http]
+   [beicon.core :as rx]))
 
-(defn- handle-response
-  [response]
+(defn handle-response
+  [{:keys [status body] :as response}]
   (cond
-    (http/success? response)
-    (rx/of (:body response))
+    (= 204 status)
+    ;; We need to send "something" so the streams listening downstream can act
+    (rx/of nil)
 
-    (http/client-error? response)
-    (rx/throw (:body response))
+    (= 502 status)
+    (rx/throw {:type :bad-gateway})
 
-    (http/server-error? response)
-    (rx/throw (:body response))
+    (= 503 status)
+    (rx/throw {:type :service-unavailable})
+
+    (= 0 (:status response))
+    (rx/throw {:type :offline})
+
+    (= 200 status)
+    (rx/of body)
+
+    (and (>= status 400)
+         (map? body))
+    (rx/throw body)
 
     :else
-    (rx/throw {:type :unexpected
-               :response response})))
+    (rx/throw {:type :unexpected-error
+               :status status
+               :data body})))
 
-(defn send-query!
+(def ^:private base-uri cfg/public-uri)
+
+(defn- send-query!
+  "A simple helper for send and receive transit data on the penpot
+  query api."
   [id params]
-  (let [uri (str cfg/public-uri "/api/w/query/" (name id))]
-    (->> (http/send! {:method :get :uri uri :query params})
-         (rx/mapcat handle-response))))
+  (->> (http/send! {:method :get
+                    :uri (u/join base-uri "api/rpc/query/" (name id))
+                    :query params})
+       (rx/map http/conditional-decode-transit)
+       (rx/mapcat handle-response)))
 
-(defn send-mutation!
+(defn- send-mutation!
+  "A simple helper for a common case of sending and receiving transit
+  data to the penpot mutation api."
   [id params]
-  (let [uri (str cfg/public-uri "/api/w/mutation/" (name id))]
-    (->> (http/send! {:method :post :uri uri :body params})
-         (rx/mapcat handle-response))))
+  (->> (http/send! {:method :post
+                    :uri (u/join base-uri "api/rpc/mutation/" (name id))
+                    :body (http/transit-data params)})
+       (rx/map http/conditional-decode-transit)
+       (rx/mapcat handle-response)))
 
-(defn- dispatch
-  [& args]
-  (first args))
+(defn- dispatch [& args] (first args))
 
 (defmulti query dispatch)
 (defmulti mutation dispatch)
@@ -65,45 +83,38 @@
   ([id] (mutation id {}))
   ([id params] (mutation id params)))
 
-(defmethod mutation :login-with-google
-  [id params]
-  (let [uri (str cfg/public-uri "/api/oauth/google")]
-    (->> (http/send! {:method :post :uri uri})
+(defmethod mutation :login-with-oauth
+  [_ {:keys [provider] :as params}]
+  (let [uri    (u/join base-uri "api/auth/oauth/" (d/name provider))
+        params (dissoc params :provider)]
+    (->> (http/send! {:method :post :uri uri :query params})
+         (rx/map http/conditional-decode-transit)
          (rx/mapcat handle-response))))
 
-(defmethod mutation :upload-media-object
-  [id params]
-  (let [form (js/FormData.)]
-    (run! (fn [[key val]]
-            (.append form (name key) val))
-          (seq params))
-    (send-mutation! id form)))
+(defmethod mutation :send-feedback
+  [_ params]
+  (->> (http/send! {:method :post
+                    :uri (u/join base-uri "api/feedback")
+                    :body (http/transit-data params)})
+       (rx/map http/conditional-decode-transit)
+       (rx/mapcat handle-response)))
 
-(defmethod mutation :update-profile-photo
-  [id params]
-  (let [form (js/FormData.)]
-    (run! (fn [[key val]]
-            (.append form (name key) val))
-          (seq params))
-    (send-mutation! id form)))
+(defmethod query :export
+  [_ params]
+  (->> (http/send! {:method :post
+                    :uri (u/join base-uri "export")
+                    :body (http/transit-data params)
+                    :response-type :blob})
+       (rx/mapcat handle-response)))
 
-(defmethod mutation :login
-  [id params]
-  (let [uri (str cfg/public-uri "/api/login")]
-    (->> (http/send! {:method :post :uri uri :body params})
-         (rx/mapcat handle-response))))
+(derive :upload-file-media-object ::multipart-upload)
+(derive :update-profile-photo ::multipart-upload)
+(derive :update-team-photo ::multipart-upload)
 
-(defmethod mutation :logout
+(defmethod mutation ::multipart-upload
   [id params]
-  (let [uri (str cfg/public-uri "/api/logout")]
-    (->> (http/send! {:method :post :uri uri :body params})
-         (rx/mapcat handle-response))))
-
-(defmethod mutation :login-with-ldap
-  [id params]
-  (let [uri (str cfg/public-uri "/api/login-ldap")]
-    (->> (http/send! {:method :post :uri uri :body params})
-         (rx/mapcat handle-response))))
-
-(def client-error? http/client-error?)
-(def server-error? http/server-error?)
+  (->> (http/send! {:method :post
+                    :uri  (u/join base-uri "api/rpc/mutation/" (name id))
+                    :body (http/form-data params)})
+       (rx/map http/conditional-decode-transit)
+       (rx/mapcat handle-response)))

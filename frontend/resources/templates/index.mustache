@@ -3,22 +3,41 @@
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="x-ua-compatible" content="ie=edge" />
-    <title>UXBOX - The Open-Source prototyping tool</title>
-    <link id="theme" href="/css/main-{{& th}}.css?ts={{& ts}}" 
-          rel="stylesheet" type="text/css" />
-    <link rel="icon" href="/images/favicon.png" />
+    <title>Penpot - Design Freedom for Teams</title>
+    <meta name="description" content="The open-source solution for design and prototyping.">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:title" content="Penpot | Design Freedom for Teams">
+    <meta property="og:description" content="The open-source solution for design and prototyping">
+    <meta property="og:image" content="https://penpot.app/images/workspace-ui.jpg">
+    <meta name="twitter:title" content="Penpot | Design Freedom for Teams">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="The open-source solution for design and prototyping">
+    <meta name="twitter:image" content="https://penpot.app/images/workspace-ui.jpg">
+    <meta name="twitter:site" content="@penpotapp">
+    <meta name="twitter:creator" content="@penpotapp">
+    <link id="theme" href="css/main-{{& th}}.css?ts={{& ts}}" rel="stylesheet" type="text/css" />
+
+    <link rel="icon" href="images/favicon.png" />
+
+    <script>
+      window.penpotTranslations = JSON.parse({{& translations}});
+      window.penpotThemes = {{& themes}};
+      window.penpotVersion = "%version%";
+    </script>
+
+    {{# manifest}}
+    <script>window.penpotWorkerURI="{{& worker}}"</script>
+    <script src="{{& config}}"></script>
+    <script src="{{& polyfills}}"></script>
+    {{/manifest}}
+
   </head>
   <body>
+    {{>../public/images/sprites/symbol/icons.svg}}
+    {{>../public/images/sprites/symbol/cursors.svg}}
     <section id="app" tabindex="1"></section>
     <section id="modal"></section>
-    <script>
-     window.appTranslations = JSON.parse({{& translations }});
-     window.appThemes = {{& themes }};
-    </script>
     {{# manifest}}
-
-    <script>window.appWorkerURI="{{& worker}}"</script>
-    <script src="{{& config}}"></script>
     <script src="{{& shared}}"></script>
     <script src="{{& main}}"></script>
     {{/manifest}}

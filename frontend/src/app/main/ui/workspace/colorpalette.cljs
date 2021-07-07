@@ -2,27 +2,26 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.workspace.colorpalette
   (:require
-   [beicon.core :as rx]
+   [app.common.math :as mth]
+   [app.main.data.workspace.colors :as mdc]
+   [app.main.data.workspace.state-helpers :as wsh]
+   [app.main.refs :as refs]
+   [app.main.store :as st]
+   [app.main.ui.components.color-bullet :as cb]
+   [app.main.ui.components.dropdown :refer [dropdown]]
+   [app.main.ui.icons :as i]
+   [app.util.color :as uc]
+   [app.util.i18n :refer [tr]]
+   [app.util.keyboard :as kbd]
+   [app.util.object :as obj]
+   [cuerdas.core :as str]
    [goog.events :as events]
    [okulary.core :as l]
-   [rumext.alpha :as mf]
-   [app.common.math :as mth]
-   ;; [app.main.data.library :as dlib]
-   [app.main.data.workspace :as udw]
-   [app.main.store :as st]
-   [app.main.ui.components.context-menu :refer [context-menu]]
-   [app.main.ui.icons :as i]
-   [app.main.ui.keyboard :as kbd]
-   [app.util.color :refer [hex->rgb]]
-   [app.util.dom :as dom]
-   [app.util.object :as obj]))
+   [rumext.alpha :as mf]))
 
 ;; --- Refs
 
@@ -31,54 +30,45 @@
       (l/derived st/state)))
 
 (def selected-palette-ref
-  (-> (l/in [:library-selected :palettes])
+  (-> (l/in [:workspace-local :selected-palette])
       (l/derived st/state)))
 
-(defn- make-selected-palette-item-ref
-  [lib-id]
-  (-> (l/in [:library-items :palettes lib-id])
+(def selected-palette-size-ref
+  (-> (l/in [:workspace-local :selected-palette-size])
       (l/derived st/state)))
 
 ;; --- Components
-
 (mf/defc palette-item
-  [{:keys [color] :as props}]
-  (let [rgb-vec (hex->rgb color)
-
-        select-color
+  [{:keys [color size]}]
+  (let [select-color
         (fn [event]
-          (if (kbd/shift? event)
-            (st/emit! (udw/update-color-on-selected-shapes {:stroke-color color}))
-            (st/emit! (udw/update-color-on-selected-shapes {:fill-color color}))))]
+          (let [ids (wsh/lookup-selected @st/state)]
+            (if (kbd/shift? event)
+              (st/emit! (mdc/change-stroke ids (merge uc/empty-color color)))
+              (st/emit! (mdc/change-fill ids (merge uc/empty-color color))))))]
 
-    [:div.color-cell {:key (str color)
+    [:div.color-cell {:class (str "cell-"(name size))
                       :on-click select-color}
-     [:span.color {:style {:background color}}]
-     [:span.color-text color]]))
+     [:& cb/color-bullet {:color color}]
+     [:& cb/color-name {:color color :size size}]]))
 
 (mf/defc palette
-  [{:keys [palettes selected left-sidebar?] :as props}]
-  (let [items-ref  (mf/use-memo
-                    (mf/deps selected)
-                    (partial make-selected-palette-item-ref selected))
-
-        items      (mf/deref items-ref)
-        state      (mf/use-state {:show-menu false })
+  [{:keys [current-colors recent-colors file-colors shared-libs selected size]}]
+  (let [state      (mf/use-state {:show-menu false })
 
         width      (:width @state 0)
         visible    (mth/round (/ width 66))
 
         offset     (:offset @state 0)
-        max-offset (- (count items)
+        max-offset (- (count current-colors)
                       visible)
 
-        close-fn   #(st/emit! (udw/toggle-layout-flags :colorpalette))
         container  (mf/use-ref nil)
 
         on-left-arrow-click
         (mf/use-callback
          (mf/deps max-offset visible)
-         (fn [event]
+         (fn [_]
            (swap! state update :offset
                   (fn [offset]
                     (if (pos? offset)
@@ -88,7 +78,7 @@
         on-right-arrow-click
         (mf/use-callback
          (mf/deps max-offset visible)
-         (fn [event]
+         (fn [_]
            (swap! state update :offset
                   (fn [offset]
                     (if (< offset max-offset)
@@ -99,21 +89,18 @@
         (mf/use-callback
          (mf/deps max-offset)
          (fn [event]
-           (if (pos? (.. event -nativeEvent -deltaY))
-             (on-right-arrow-click event)
-             (on-left-arrow-click event))))
+           (let [delta (+ (.. event -nativeEvent -deltaY) (.. event -nativeEvent -deltaX))]
+             (if (pos? delta)
+               (on-right-arrow-click event)
+               (on-left-arrow-click event)))))
 
         on-resize
         (mf/use-callback
-         (fn [event]
+         (fn [_]
            (let [dom   (mf/ref-val container)
                  width (obj/get dom "clientWidth")]
-             (swap! state assoc :width width))))
+             (swap! state assoc :width width))))]
 
-        handle-click
-        (mf/use-callback
-         (fn [library]))]
-           ;; (st/emit! (dlib/select-library :palettes (:id library)))))]
 
     (mf/use-layout-effect
      #(let [dom   (mf/ref-val container)
@@ -125,49 +112,113 @@
         (fn []
           (events/unlistenByKey key1))))
 
-    (mf/use-effect
-     (mf/deps selected)
-     (fn []
-       (when selected)))
-         ;; (st/emit! (dlib/retrieve-library-data :palettes selected)))))
+    [:div.color-palette.left-sidebar-open
+     [:& dropdown {:show (:show-menu @state)
+                   :on-close #(swap! state assoc :show-menu false)}
+      [:ul.workspace-context-menu.palette-menu
+       (for [[idx cur-library] (map-indexed vector (vals shared-libs))]
+         (let [colors (-> cur-library (get-in [:data :colors]) vals)]
+           [:li.palette-library
+            {:key (str "library-" idx)
+             :on-click #(st/emit! (mdc/change-palette-selected (:id cur-library)))}
+            (when (= selected (:id cur-library)) i/tick)
+            [:div.library-name (str (:name cur-library) " " (str/format "(%s)" (count colors)))]
+            [:div.color-sample
+             (for [[idx {:keys [color]}] (map-indexed vector (take 7 colors))]
+               [:& cb/color-bullet {:key (str "color-" idx)
+                                    :color color}])]]))
 
-    [:div.color-palette {:class (when left-sidebar? "left-sidebar-open")}
-     [:& context-menu
-      {:selectable true
-       :selected (->> palettes
-                      (filter #(= (:id %) selected))
-                      first
-                      :name)
-       :show (:show-menu @state)
-       :on-close #(swap! state assoc :show-menu false)
-       :options (mapv #(vector (:name %) (partial handle-click %)) palettes)}]
+
+       [:li.palette-library
+        {:on-click #(st/emit! (mdc/change-palette-selected :file))}
+        (when (= selected :file) i/tick)
+        [:div.library-name (str (tr "workspace.libraries.colors.file-library")
+                                (str/format " (%s)" (count file-colors)))]
+        [:div.color-sample
+         (for [[idx color] (map-indexed vector (take 7 (vals file-colors))) ]
+           [:& cb/color-bullet {:key (str "color-" idx)
+                                :color color}])]]
+
+       [:li.palette-library
+        {:on-click #(st/emit! (mdc/change-palette-selected :recent))}
+        (when (= selected :recent) i/tick)
+        [:div.library-name (str (tr "workspace.libraries.colors.recent-colors")
+                                (str/format " (%s)" (count recent-colors)))]
+        [:div.color-sample
+         (for [[idx color] (map-indexed vector (take 7 (reverse recent-colors))) ]
+           [:& cb/color-bullet {:key (str "color-" idx)
+                                :color color}])]]
+
+       [:hr.dropdown-separator]
+
+       [:li
+        {:on-click #(st/emit! (mdc/change-palette-size :big))}
+        (when (= size :big) i/tick)
+        (tr "workspace.libraries.colors.big-thumbnails")]
+
+       [:li
+        {:on-click #(st/emit! (mdc/change-palette-size :small))}
+        (when (= size :small) i/tick)
+        (tr "workspace.libraries.colors.small-thumbnails")]]]
 
      [:div.color-palette-actions
       {:on-click #(swap! state assoc :show-menu true)}
       [:div.color-palette-actions-button i/actions]]
 
      [:span.left-arrow {:on-click on-left-arrow-click} i/arrow-slide]
-     [:div.color-palette-content {:ref container :on-wheel on-scroll}
+     [:div.color-palette-content {:class (if (= size :big) "size-big" "size-small")
+                                  :ref container :on-wheel on-scroll}
       [:div.color-palette-inside {:style {:position "relative"
                                           :right (str (* 66 offset) "px")}}
-       (for [item items]
-         [:& palette-item {:color (:content item) :key (:id item)}])]]
+       (for [[idx item] (map-indexed vector current-colors)]
+         [:& palette-item {:size size
+                           :color item
+                           :key idx}])]]
+
      [:span.right-arrow {:on-click on-right-arrow-click} i/arrow-slide]]))
 
-(mf/defc colorpalette
-  [{:keys [left-sidebar? project] :as props}]
-  (let [team-id  (:team-id project)
-        palettes (->> (mf/deref palettes-ref)
-                      (vals)
-                      (mapcat identity))
-        selected (or (mf/deref selected-palette-ref)
-                     (:id (first palettes)))]
-    (mf/use-effect
-     (mf/deps team-id)
-     (fn []))
-       ;; (st/emit! (dlib/retrieve-libraries :palettes)
-       ;;           (dlib/retrieve-libraries :palettes team-id))))
+(defn library->colors [shared-libs selected]
+  (map #(merge % {:file-id selected})
+       (-> shared-libs
+           (get-in [selected :data :colors])
+           (vals))))
 
-    [:& palette {:left-sidebar? left-sidebar?
+(mf/defc colorpalette
+  []
+  (let [recent-colors (mf/deref refs/workspace-recent-colors)
+        file-colors   (mf/deref refs/workspace-file-colors)
+        shared-libs   (mf/deref refs/workspace-libraries)
+        selected      (or (mf/deref selected-palette-ref) :recent)
+        size      (or (mf/deref selected-palette-size-ref) :big)
+
+        current-library-colors (mf/use-state [])]
+
+    (mf/use-effect
+     (mf/deps selected)
+     (fn []
+       (reset! current-library-colors
+               (into []
+                     (cond
+                       (= selected :recent) (reverse recent-colors)
+                       (= selected :file)   (->> (vals file-colors) (sort-by :name))
+                       :else                (->> (library->colors shared-libs selected) (sort-by :name)))))))
+
+    (mf/use-effect
+     (mf/deps recent-colors)
+     (fn []
+       (when (= selected :recent)
+         (reset! current-library-colors (reverse recent-colors)))))
+
+    (mf/use-effect
+     (mf/deps file-colors)
+     (fn []
+       (when (= selected :file)
+         (reset! current-library-colors (into [] (->> (vals file-colors)
+                                                      (sort-by :name)))))))
+
+    [:& palette {:current-colors @current-library-colors
+                 :recent-colors recent-colors
+                 :file-colors file-colors
+                 :shared-libs shared-libs
                  :selected selected
-                 :palettes palettes}]))
+                 :size size}]))

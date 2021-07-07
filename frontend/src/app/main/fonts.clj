@@ -2,26 +2,23 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.fonts
   "A fonts loading macros."
   (:require
-   [cuerdas.core :as str]
+   [clojure.data.json :as json]
    [clojure.java.io :as io]
-   [clojure.data.json :as json]))
+   [cuerdas.core :as str]))
 
 (defn- parse-gfont-variant
   [variant]
   (cond
     (= "regular" variant)
-    {:name "regular" :weight "400" :style "normal"}
+    {:id "regular" :name "regular" :weight "400" :style "normal"}
 
     (= "italic" variant)
-    {:name "italic" :weight "400" :style "italic"}
+    {:id "italic" :name "italic" :weight "400" :style "italic"}
 
     :else
     (when-let [[a b c] (re-find #"^(\d+)(.*)$" variant)]

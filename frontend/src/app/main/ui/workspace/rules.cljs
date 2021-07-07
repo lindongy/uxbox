@@ -2,16 +2,13 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.workspace.rules
   (:require
-   [rumext.alpha :as mf]
    [app.common.math :as mth]
-   [app.util.object :as obj]))
+   [app.util.object :as obj]
+   [rumext.alpha :as mf]))
 
 (defn- calculate-step-size
   [zoom]
@@ -32,50 +29,54 @@
     :else 1))
 
 (defn draw-rule!
-  [dctx {:keys [zoom size start count type] :or {count 200}}]
-  (let [txfm (- (* (- 0 start) zoom) 20)
-        minv (mth/round start)
-        maxv (mth/round (+ start (/ size zoom)))
-        step (calculate-step-size zoom)]
+  [dctx {:keys [zoom size start type]}]
+  (when start
+    (let [txfm (- (* (- 0 start) zoom) 20)
+          step (calculate-step-size zoom)
 
-    (if (= type :horizontal)
-      (.translate dctx txfm 0)
-      (.translate dctx 0 txfm))
+          minv (max (mth/round start) -100000)
+          minv (* (mth/ceil (/ minv step)) step)
 
-    (obj/set! dctx "font" "12px sourcesanspro")
-    (obj/set! dctx "fillStyle" "#7B7D85")
-    (obj/set! dctx "strokeStyle" "#7B7D85")
-    (obj/set! dctx "textAlign" "center")
+          maxv (min (mth/round (+ start (/ size zoom))) 100000)
+          maxv (* (mth/floor (/ maxv step)) step)
 
-    (loop [i minv]
-      (when (< i maxv)
-        (let [pos (+ (* i zoom) 0)]
-          (when (= (mod i step) 0)
+          path (js/Path2D.)]
+
+      (if (= type :horizontal)
+        (.translate dctx txfm 0)
+        (.translate dctx 0 txfm))
+
+      (obj/set! dctx "font" "12px worksans")
+      (obj/set! dctx "fillStyle" "#7B7D85")
+      (obj/set! dctx "strokeStyle" "#7B7D85")
+      (obj/set! dctx "textAlign" "center")
+
+      (loop [i minv]
+        (if (<= i maxv)
+          (let [pos (+ (* i zoom) 0)]
             (.save dctx)
             (if (= type :horizontal)
               (do
-                (.fillText dctx (str i) pos 13))
+                ;; Write the rule numbers
+                (.fillText dctx (str i) pos 13)
+
+                ;; Build the rules lines
+                (.moveTo path pos 17)
+                (.lineTo path pos 20))
               (do
+                ;; Write the rule numbers
                 (.translate dctx 12 pos)
                 (.rotate dctx (/ (* 270 js/Math.PI) 180))
-                (.fillText dctx (str i) 0 0)))
-            (.restore dctx))
-          (recur (inc i)))))
+                (.fillText dctx (str i) 0 0)
 
-    (let [path (js/Path2D.)]
-      (loop [i minv]
-        (if (> i maxv)
-          (.stroke dctx path)
-          (let [pos (+ (* i zoom) 0)]
-            (when (= (mod i step) 0)
-              (if (= type :horizontal)
-                (do
-                  (.moveTo path pos 17)
-                  (.lineTo path pos 20))
-                (do
-                  (.moveTo path 17 pos)
-                  (.lineTo path 20 pos))))
-            (recur (inc i))))))))
+                ;; Build the rules lines
+                (.moveTo path 17 pos)
+                (.lineTo path 20 pos)))
+            (.restore dctx)
+            (recur (+ i step)))
+
+          ;; Put the path in the canvas
+          (.stroke dctx path))))))
 
 
 (mf/defc horizontal-rule

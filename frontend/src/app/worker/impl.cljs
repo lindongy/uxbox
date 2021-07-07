@@ -2,14 +2,16 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2016 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.worker.impl
   (:require
-   [okulary.core :as l]
-   [app.util.transit :as t]))
+   [app.common.pages.changes :as ch]
+   [okulary.core :as l]))
 
 (enable-console-print!)
+
+(defonce state (l/atom {:pages-index {}}))
 
 ;; --- Handler
 
@@ -23,16 +25,28 @@
   [message]
   message)
 
-(defmethod handler :create-page-indices
-  [message]
+(defmethod handler :initialize-indices
+  [{:keys [data] :as message}]
+
+  (reset! state data)
+
   (handler (-> message
-               (assoc :cmd :selection/create-index)))
+               (assoc :cmd :selection/initialize-index)))
   (handler (-> message
-               (assoc :cmd :snaps/create-index))))
+               (assoc :cmd :snaps/initialize-index))))
 
 (defmethod handler :update-page-indices
-  [message]
-  (handler (-> message
-               (assoc :cmd :selection/update-index)))
-  (handler (-> message
-               (assoc :cmd :snaps/update-index))))
+  [{:keys [page-id changes] :as message}]
+
+  (let [old-objects (get-in @state [:pages-index page-id :objects])]
+    (swap! state ch/process-changes changes false)
+
+    (let [new-objects (get-in @state [:pages-index page-id :objects])
+          message (assoc message
+                         :objects new-objects
+                         :new-objects new-objects
+                         :old-objects old-objects)]
+      (handler (-> message
+                   (assoc :cmd :selection/update-index)))
+      (handler (-> message
+                   (assoc :cmd :snaps/update-index))))))

@@ -2,34 +2,43 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.shapes.image
   (:require
-   [rumext.alpha :as mf]
-   [app.config :as cfg]
    [app.common.geom.shapes :as geom]
+   [app.config :as cfg]
    [app.main.ui.shapes.attrs :as attrs]
-   [app.util.object :as obj]))
+   [app.main.ui.shapes.embed :as embed]
+   [app.util.dom :as dom]
+   [app.util.object :as obj]
+   [rumext.alpha :as mf]))
 
 (mf/defc image-shape
   {::mf/wrap-props false}
   [props]
+
   (let [shape (unchecked-get props "shape")
-        {:keys [id x y width height rotation metadata]} shape
+        {:keys [x y width height metadata]} shape
+        uri   (cfg/resolve-file-media metadata)
+        embed (embed/use-data-uris [uri])
+
         transform (geom/transform-matrix shape)
-        uri       (cfg/resolve-media-path (:path metadata))
         props (-> (attrs/extract-style-attrs shape)
                   (obj/merge!
                    #js {:x x
                         :y y
                         :transform transform
-                        :id (str "shape-" id)
-                        :preserveAspectRatio "none"
-                        :xlinkHref uri
                         :width width
-                        :height height}))]
-    [:> "image" props]))
+                        :height height
+                        :preserveAspectRatio "none"
+                        :data-loading (str (not (contains? embed uri)))}))
+
+        on-drag-start (fn [event]
+                        ;; Prevent browser dragging of the image
+                        (dom/prevent-default event))]
+
+    [:> "image" (obj/merge!
+                 props
+                 #js {:xlinkHref (get embed uri uri)
+                      :onDragStart on-drag-start})]))

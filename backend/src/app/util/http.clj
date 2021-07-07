@@ -2,17 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2019 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.http
   "Http client abstraction layer."
   (:require
-   [promesa.core :as p]
-   [promesa.exec :as px]
-   [java-http-clj.core :as http]))
+   [java-http-clj.core :as http]
+   [promesa.exec :as px]))
 
 (def default-client
-  (delay (http/build-client {:executor @px/default-executor})))
+  (delay (http/build-client {:executor @px/default-executor
+                             :connect-timeout 10000 ;; 10s
+                             :follow-redirects :always})))
 
 (defn get!
   [url opts]

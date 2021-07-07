@@ -2,52 +2,89 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.worker
   "A lightweight layer on top of webworkers api."
   (:require
-   [beicon.core :as rx]
+   [app.common.transit :as t]
    [app.common.uuid :as uuid]
-   [app.util.transit :as t]))
+   [beicon.core :as rx]))
 
 (declare handle-response)
 (defrecord Worker [instance stream])
 
+(defn- send-message!
+  ([worker message]
+   (send-message! worker message nil))
+
+  ([worker {sender-id :sender-id :as message} {:keys [many?] :or {many? false}}]
+   (let [take-messages
+         (fn [ob]
+           (if many?
+             (rx/take-while #(not (:completed %)) ob)
+             (rx/take 1 ob)))
+
+         data (t/encode-str message)
+         instance (:instance worker)]
+
+     (.postMessage instance data)
+     (->> (:stream worker)
+          (rx/filter #(= (:reply-to %) sender-id))
+          (take-messages)
+          (rx/map handle-response)))))
+
 (defn ask!
-  [w message]
-  (let [sender-id (uuid/next)
-        data (t/encode {:payload message :sender-id sender-id})
-        instance (:instance w)]
-    (.postMessage instance data)
-    (->> (:stream w)
-         (rx/filter #(= (:reply-to %) sender-id))
-         (rx/map handle-response)
-         (rx/first))))
+  [worker message]
+  (send-message!
+   worker
+   {:sender-id (uuid/next)
+    :payload message}))
+
+(defn ask-many!
+  [worker message]
+  (send-message!
+   worker
+   {:sender-id (uuid/next)
+    :payload message}
+   {:many? true}))
+
+(defn ask-buffered!
+  [worker message]
+  (send-message!
+   worker
+   {:sender-id (uuid/next)
+    :payload message
+    :buffer? true}))
 
 (defn init
   "Return a initialized webworker instance."
   [path on-error]
-  (let [ins (js/Worker. path)
-        bus (rx/subject)
-        wrk (Worker. ins bus)]
-    (.addEventListener ins "message"
-                       (fn [event]
-                         (let [data (.-data event)
-                               data (t/decode data)]
-                           (rx/push! bus data))))
-    (.addEventListener ins "error"
-                       (fn [error]
-                         (on-error wrk error)))
+  (let [instance (js/Worker. path)
+        bus     (rx/subject)
+        worker  (Worker. instance bus)
 
-    wrk))
+        handle-message
+        (fn [event]
+          (let [data (.-data event)
+                data (t/decode-str data)]
+            (if (:error data)
+              (on-error (:error data))
+              (rx/push! bus data))))
+
+        handle-error
+        (fn [error]
+          (on-error worker (.-data error)))]
+
+    (.addEventListener instance "message" handle-message)
+    (.addEventListener instance "error" handle-error)
+
+    worker))
 
 (defn- handle-response
-  [{:keys [payload error] :as response}]
-  (if-let [{:keys [data message]} error]
-    (throw (ex-info message data))
-    payload))
+  [{:keys [payload error dropped]}]
+  (when-not dropped
+    (if-let [{:keys [data message]} error]
+      (throw (ex-info message data))
+      payload)))
 

@@ -10,7 +10,7 @@ body {
   color: $color-gray-20;
   display: flex;
   flex-direction: column;
-  font-family: "sourcesanspro", sans-serif;
+  font-family: 'worksans', sans-serif;
   height: 100vh;
   overflow: hidden;
 }
@@ -223,4 +223,9 @@ input[type=number]::-webkit-inner-spin-button,
 
 input[type=number] {
   -moz-appearance: textfield;
+}
+
+[contenteditable] {
+    -webkit-user-select: text;
+    user-select: text;
 }

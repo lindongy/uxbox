@@ -2,200 +2,519 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 Andrey Antukh <niwi@niwi.nz>
-;; Copyright (c) 2020 Juan de la Cruz <delacruzgarciajuan@gmail.com>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.dashboard.sidebar
   (:require
-   [cuerdas.core :as str]
-   [goog.functions :as f]
-   [okulary.core :as l]
-   [rumext.alpha :as mf]
-   [app.main.constants :as c]
-   [app.main.data.dashboard :as dsh]
+   [app.common.data :as d]
+   [app.common.spec :as us]
+   [app.config :as cfg]
+   [app.main.data.dashboard :as dd]
+   [app.main.data.messages :as dm]
+   [app.main.data.modal :as modal]
+   [app.main.data.users :as du]
    [app.main.refs :as refs]
    [app.main.store :as st]
-   [app.main.ui.confirm :refer [confirm-dialog]]
-   [app.main.ui.dashboard.common :as common]
+   [app.main.ui.components.dropdown :refer [dropdown]]
+   [app.main.ui.components.forms :as fm]
+   [app.main.ui.dashboard.comments :refer [comments-section]]
+   [app.main.ui.dashboard.inline-edition :refer [inline-edition]]
+   [app.main.ui.dashboard.project-menu :refer [project-menu]]
+   [app.main.ui.dashboard.team-form]
    [app.main.ui.icons :as i]
-   [app.main.ui.keyboard :as kbd]
-   [app.main.ui.modal :as modal]
    [app.util.dom :as dom]
-   [app.util.i18n :as i18n :refer [t tr]]
+   [app.util.dom.dnd :as dnd]
+   [app.util.i18n :as i18n :refer [tr]]
+   [app.util.object :as obj]
    [app.util.router :as rt]
-   [app.util.time :as dt]))
-
-;; --- Component: Sidebar
+   [cljs.spec.alpha :as s]
+   [goog.functions :as f]
+   [rumext.alpha :as mf]))
 
 (mf/defc sidebar-project
-  [{:keys [id name selected? team-id] :as props}]
-  (let [dashboard-local @refs/dashboard-local
-        project-for-edit (:project-for-edit dashboard-local)
-        local (mf/use-state {:name name
-                             :editing (= id project-for-edit)})
-        editable? (not (nil? id))
-        edit-input-ref (mf/use-ref)
+  [{:keys [item selected?] :as props}]
+  (let [dstate           (mf/deref refs/dashboard-local)
+        selected-files   (:selected-files dstate)
+        selected-project (:selected-project dstate)
+        edit-id          (:project-for-edit dstate)
 
-        on-click #(st/emit! (rt/nav :dashboard-project {:team-id team-id :project-id id}))
-        on-dbl-click #(when editable? (swap! local assoc :editing true))
-        on-input #(as-> % $
-                    (dom/get-target $)
-                    (dom/get-value $)
-                    (swap! local assoc :name $))
-        on-cancel #(do
-                     (st/emit! dsh/clear-project-for-edit)
-                     (swap! local assoc :editing false :name name))
-        on-keyup #(cond
-                    (kbd/esc? %)
-                    (on-cancel)
+        local            (mf/use-state
+                          {:menu-open false
+                           :menu-pos nil
+                           :edition? (= (:id item) edit-id)
+                           :dragging? false})
 
-                    (kbd/enter? %)
-                    (let [name (-> % dom/get-target dom/get-value)]
-                      (st/emit! dsh/clear-project-for-edit)
-                      (st/emit! (dsh/rename-project id name))
-                      (swap! local assoc :editing false)))]
+        on-click
+        (mf/use-callback
+         (mf/deps item)
+         (fn []
+           (st/emit! (dd/go-to-files (:id item)))))
 
-    (mf/use-effect
-      (mf/deps (:editing @local))
-      #(when (:editing @local)
-         (let [edit-input (mf/ref-val edit-input-ref)]
-           (dom/focus! edit-input)
-           (dom/select-text! edit-input))
-         nil))
+        on-menu-click
+        (mf/use-callback
+         (fn [event]
+           (let [position (dom/get-client-position event)]
+             (dom/prevent-default event)
+             (swap! local assoc
+                    :menu-open true
+                    :menu-pos position))))
 
-    [:li {:on-click on-click
-          :on-double-click on-dbl-click
-          :class-name (when selected? "current")}
-     (if (:editing @local)
-       [:div.edit-wrapper
-        [:input.element-title {:value (:name @local)
-                               :ref edit-input-ref
-                               :on-change on-input
-                               :on-key-down on-keyup}]
-        [:span.close {:on-click on-cancel} i/close]]
-       [:*
-        i/folder
-        [:span.element-title name]])]))
+        on-menu-close
+        (mf/use-callback #(swap! local assoc :menu-open false))
 
-(def projects-iref
-  (l/derived :projects st/state))
+        on-edit-open
+        (mf/use-callback #(swap! local assoc :edition? true))
 
-(mf/defc sidebar-projects
-  [{:keys [team-id selected-project-id] :as props}]
-  (let [projects (->> (mf/deref projects-iref)
-                      (vals)
-                      (remove #(:is-default %))
-                      (sort-by :created-at))]
-    (for [item projects]
-      [:& sidebar-project
-       {:id (:id item)
-        :key (:id item)
-        :name (:name item)
-        :selected? (= (:id item) selected-project-id)
-        :team-id team-id
-        }])))
+        on-edit
+        (mf/use-callback
+         (mf/deps item)
+         (fn [name]
+           (st/emit! (dd/rename-project (assoc item :name name)))
+           (swap! local assoc :edition? false)))
 
-(mf/defc sidebar-team
-  [{:keys [profile
-           team-id
-           selected-section
-           selected-project-id
-           selected-team-id] :as props}]
-  (let [home?      (and (= selected-section :dashboard-team)
-                        (= selected-team-id (:default-team-id profile)))
-        drafts?    (and (= selected-section :dashboard-project)
-                        (= selected-team-id (:default-team-id profile))
-                        (= selected-project-id (:default-project-id profile)))
-        libraries? (= selected-section :dashboard-libraries)
-        ;; library? (and (str/starts-with? (name selected-section) "dashboard-library")
-        ;;               (= selected-team-id (:default-team-id profile)))
-        locale (i18n/use-locale)]
-    [:div.sidebar-team
-     [:ul.dashboard-elements.dashboard-common
-      [:li.recent-projects
-       {:on-click #(st/emit! (rt/nav :dashboard-team {:team-id team-id}))
-        :class-name (when home? "current")}
-       i/recent
-       [:span.element-title (t locale "dashboard.sidebar.recent")]]
+        on-drag-enter
+        (mf/use-callback
+          (mf/deps selected-project)
+          (fn [e]
+            (when (dnd/has-type? e "penpot/files")
+              (dom/prevent-default e)
+              (when-not (dnd/from-child? e)
+                (when (not= selected-project (:id item))
+                  (swap! local assoc :dragging? true))))))
 
-      [:li
-       {:on-click #(st/emit! (rt/nav :dashboard-project {:team-id team-id
-                                                         :project-id "drafts"}))
-        :class-name (when drafts? "current")}
-       i/file-html
-       [:span.element-title (t locale "dashboard.sidebar.drafts")]]
+        on-drag-over
+        (mf/use-callback
+          (fn [e]
+            (when (dnd/has-type? e "penpot/files")
+              (dom/prevent-default e))))
 
-      [:li
-       {:on-click #(st/emit! (rt/nav :dashboard-libraries {:team-id team-id}))
-        :class-name (when libraries? "current")}
-       i/library
-       [:span.element-title (t locale "dashboard.sidebar.libraries")]]]
+        on-drag-leave
+        (mf/use-callback
+          (fn [e]
+            (when-not (dnd/from-child? e)
+              (swap! local assoc :dragging? false))))
 
-     [:div.projects-row
-      [:span "PROJECTS"]
-      [:a.btn-icon-light.btn-small {:on-click #(st/emit! dsh/create-project)}
-       i/close]]
+        on-drop-success
+        (mf/use-callback
+         (mf/deps (:id item))
+         (st/emitf (dm/success (tr "dashboard.success-move-file"))
+                   (dd/go-to-files (:id item))))
 
-     [:ul.dashboard-elements
-      [:& sidebar-projects
-       {:selected-team-id selected-team-id
-        :selected-project-id selected-project-id
-        :team-id team-id}]]]
+        on-drop
+        (mf/use-callback
+         (mf/deps item selected-files)
+         (fn [_]
+           (swap! local assoc :dragging? false)
+           (when (not= selected-project (:id item))
+             (let [data  {:ids selected-files
+                          :project-id (:id item)}
+                   mdata {:on-success on-drop-success}]
+               (st/emit! (dd/move-files (with-meta data mdata)))))))]
 
-    ))
+    [:*
+     [:li {:class (if selected? "current"
+                    (when (:dragging? @local) "dragging"))
+           :on-click on-click
+           :on-double-click on-edit-open
+           :on-context-menu on-menu-click
+           :on-drag-enter on-drag-enter
+           :on-drag-over on-drag-over
+           :on-drag-leave on-drag-leave
+           :on-drop on-drop}
+      (if (:edition? @local)
+        [:& inline-edition {:content (:name item)
+                            :on-end on-edit}]
+        [:span.element-title (:name item)])]
+     [:& project-menu {:project item
+                       :show? (:menu-open @local)
+                       :left (:x (:menu-pos @local))
+                       :top (:y (:menu-pos @local))
+                       :on-edit on-edit-open
+                       :on-menu-close on-menu-close}]]))
 
-
-(def debounced-emit! (f/debounce st/emit! 500))
-
-(mf/defc sidebar
-  [{:keys [section team-id project-id search-term] :as props}]
-  (let [locale (i18n/use-locale)
-        profile (mf/deref refs/profile)
-        search-term-not-nil (or search-term "")
+(mf/defc sidebar-search
+  [{:keys [search-term team-id] :as props}]
+  (let [search-term (or search-term "")
+        focused?    (mf/use-state false)
+        emit!       (mf/use-memo #(f/debounce st/emit! 500))
 
         on-search-focus
-        (fn [event]
-          (let [target (dom/get-target event)
-                value (dom/get-value target)]
-            (dom/select-text! target)
-            (if (empty? value)
-              (debounced-emit! (rt/nav :dashboard-search {:team-id team-id} {}))
-              (debounced-emit! (rt/nav :dashboard-search {:team-id team-id} {:search-term value})))))
+        (mf/use-callback
+         (mf/deps team-id)
+         (fn [event]
+           (reset! focused? true)
+           (let [value (dom/get-target-val event)]
+             (dom/select-text! (dom/get-target event))
+             (emit! (dd/go-to-search value)))))
+
+        on-search-blur
+        (mf/use-callback
+         (fn [_]
+           (reset! focused? false)))
 
         on-search-change
-        (fn [event]
-          (let [value (-> (dom/get-target event)
-                          (dom/get-value))]
-            (debounced-emit! (rt/nav :dashboard-search {:team-id team-id} {:search-term value}))))
+        (mf/use-callback
+         (mf/deps team-id)
+         (fn [event]
+           (let [value (dom/get-target-val event)]
+             (emit! (dd/go-to-search value)))))
 
         on-clear-click
-        (fn [event]
-          (let [search-input (dom/get-element "search-input")]
-            (dom/clean-value! search-input)
-            (dom/focus! search-input)
-            (debounced-emit! (rt/nav :dashboard-search {:team-id team-id} {}))))]
+        (mf/use-callback
+         (mf/deps team-id)
+         (fn [_]
+           (let [search-input (dom/get-element "search-input")]
+             (dom/clean-value! search-input)
+             (dom/focus! search-input)
+             (emit! (dd/go-to-search)))))]
 
-    [:div.dashboard-sidebar
-     [:div.dashboard-sidebar-inside
-      [:form.dashboard-search
-       [:input.input-text
-        {:key :images-search-box
-         :id "search-input"
-         :type "text"
-         :placeholder (t locale "ds.search.placeholder")
-         :default-value search-term-not-nil
-         :auto-complete "off"
-         :on-focus on-search-focus
-         :on-change on-search-change
-         :ref #(when % (set! (.-value %) search-term-not-nil))}]
+    [:form.sidebar-search
+     [:input.input-text
+      {:key :images-search-box
+       :id "search-input"
+       :type "text"
+       :placeholder (tr "dashboard.search-placeholder")
+       :default-value search-term
+       :auto-complete "off"
+       :on-focus on-search-focus
+       :on-blur on-search-blur
+       :on-change on-search-change
+       :ref #(when % (set! (.-value %) search-term))}]
+
+     (if (or @focused? (seq search-term))
        [:div.clear-search
         {:on-click on-clear-click}
-        i/close]]
-      [:& sidebar-team {:selected-team-id team-id
-                        :selected-project-id project-id
-                        :selected-section section
-                        :profile profile
-                        :team-id (:default-team-id profile)}]]]))
+        i/close]
+
+       [:div.search
+        {:on-click on-clear-click}
+        i/search])]))
+
+(mf/defc teams-selector-dropdown
+  [{:keys [profile] :as props}]
+  (let [teams (mf/deref refs/teams)
+
+        on-create-clicked
+        (mf/use-callback
+         (st/emitf (modal/show :team-form {})))
+
+        team-selected
+        (mf/use-callback
+         (fn [team-id]
+           (st/emit! (dd/go-to-projects team-id))))]
+
+    [:ul.dropdown.teams-dropdown
+     [:li.title (tr "dashboard.switch-team")]
+     [:hr]
+     [:li.team-name {:on-click (partial team-selected (:default-team-id profile))}
+      [:span.team-icon i/logo-icon]
+      [:span.team-text (tr "dashboard.your-penpot")]]
+
+     (for [team (remove :is-default (vals teams))]
+       [:* {:key (:id team)}
+        [:li.team-name {:on-click (partial team-selected (:id team))}
+         [:span.team-icon
+          [:img {:src (cfg/resolve-team-photo-url team)}]]
+         [:span.team-text {:title (:name team)} (:name team)]]])
+
+     [:hr]
+     [:li.action {:on-click on-create-clicked}
+      (tr "dashboard.create-new-team")]]))
+
+(s/def ::member-id ::us/uuid)
+(s/def ::leave-modal-form
+  (s/keys :req-un [::member-id]))
+
+(mf/defc leave-and-reassign-modal
+  {::mf/register modal/components
+   ::mf/register-as ::leave-and-reassign}
+  [{:keys [members profile team accept]}]
+  (let [form        (fm/use-form :spec ::leave-modal-form :initial {})
+        members     (some->> members (filterv #(not= (:id %) (:id profile))))
+        options     (into [{:value ""
+                            :label (tr "modals.leave-and-reassign.select-memeber-to-promote")}]
+                          (map #(hash-map :label (:name %) :value (str (:id %))) members))
+
+        on-cancel   (st/emitf (modal/hide))
+        on-accept
+        (fn [_]
+          (let [member-id (get-in @form [:clean-data :member-id])]
+            (accept member-id)))]
+
+    [:div.modal-overlay
+     [:div.modal-container.confirm-dialog
+      [:div.modal-header
+       [:div.modal-header-title
+        [:h2 (tr "modals.leave-and-reassign.title")]]
+       [:div.modal-close-button
+        {:on-click on-cancel} i/close]]
+
+      [:div.modal-content.generic-form
+       [:p (tr "modals.leave-and-reassign.hint1" (:name team))]
+
+       (if (empty? members)
+         [:p (tr "modals.leave-and-reassign.forbiden")]
+         [:*
+          [:p (tr "modals.leave-and-reassign.hint2")]
+          [:& fm/form {:form form}
+           [:& fm/select {:name :member-id
+                          :options options}]]])]
+
+      [:div.modal-footer
+       [:div.action-buttons
+        [:input.cancel-button
+         {:type "button"
+          :value (tr "labels.cancel")
+          :on-click on-cancel}]
+
+        [:input.accept-button
+         {:type "button"
+          :class (if (:valid @form) "primary" "btn-disabled")
+          :disabled (not (:valid @form))
+          :value (tr "modals.leave-and-reassign.promote-and-leave")
+          :on-click on-accept}]]]]]))
+
+(mf/defc team-options-dropdown
+  [{:keys [team profile] :as props}]
+  (let [go-members  (st/emitf (dd/go-to-team-members))
+        go-settings (st/emitf (dd/go-to-team-settings))
+
+        members-map (mf/deref refs/dashboard-team-members)
+        members     (vals members-map)
+
+        on-rename-clicked
+        (st/emitf (modal/show :team-form {:team team}))
+
+        on-leaved-success
+        (fn []
+          (st/emit! (modal/hide)
+                    (dd/go-to-projects (:default-team-id profile))))
+
+        leave-fn
+        (st/emitf (dd/leave-team (with-meta {} {:on-success on-leaved-success})))
+
+        leave-and-reassign-fn
+        (fn [member-id]
+          (let [params {:reassign-to member-id}]
+            (st/emit! (dd/leave-team (with-meta params {:on-success on-leaved-success})))))
+
+        on-leave-clicked
+        (st/emitf (modal/show
+                   {:type :confirm
+                    :title (tr "modals.leave-confirm.title")
+                    :message (tr "modals.leave-confirm.message")
+                    :accept-label (tr "modals.leave-confirm.accept")
+                    :on-accept leave-fn}))
+
+        on-leave-as-owner-clicked
+        (st/emitf (modal/show
+                   {:type ::leave-and-reassign
+                    :profile profile
+                    :team team
+                    :members members
+                    :accept leave-and-reassign-fn}))
+
+        delete-fn
+        (st/emitf (dd/delete-team (with-meta team {:on-success on-leaved-success})))
+
+        on-delete-clicked
+        (st/emitf
+         (modal/show
+          {:type :confirm
+           :title (tr "modals.delete-team-confirm.title")
+           :message (tr "modals.delete-team-confirm.message")
+           :accept-label (tr "modals.delete-team-confirm.accept")
+           :on-accept delete-fn}))]
+
+    [:ul.dropdown.options-dropdown
+     [:li {:on-click go-members} (tr "labels.members")]
+     [:li {:on-click go-settings} (tr "labels.settings")]
+     [:hr]
+     [:li {:on-click on-rename-clicked} (tr "labels.rename")]
+
+     (cond
+       (:is-owner team)
+       [:li {:on-click on-leave-as-owner-clicked} (tr "dashboard.leave-team")]
+
+       (> (count members) 1)
+       [:li {:on-click on-leave-clicked}  (tr "dashboard.leave-team")])
+
+
+     (when (:is-owner team)
+       [:li {:on-click on-delete-clicked} (tr "dashboard.delete-team")])]))
+
+
+(mf/defc sidebar-team-switch
+  [{:keys [team profile] :as props}]
+  (let [show-team-opts-ddwn? (mf/use-state false)
+        show-teams-ddwn?     (mf/use-state false)]
+
+    [:div.sidebar-team-switch
+     [:div.switch-content
+      [:div.current-team {:on-click #(reset! show-teams-ddwn? true)}
+       (if (:is-default team)
+         [:div.team-name
+          [:span.team-icon i/logo-icon]
+          [:span.team-text (tr "dashboard.default-team-name")]]
+         [:div.team-name
+          [:span.team-icon
+           [:img {:src (cfg/resolve-team-photo-url team)}]]
+          [:span.team-text {:title (:name team)} (:name team)]])
+
+       [:span.switch-icon
+        i/arrow-down]]
+
+      (when-not (:is-default team)
+        [:div.switch-options {:on-click #(reset! show-team-opts-ddwn? true)}
+         i/actions])]
+
+     ;; Teams Dropdown
+     [:& dropdown {:show @show-teams-ddwn?
+                   :on-close #(reset! show-teams-ddwn? false)}
+      [:& teams-selector-dropdown {:team team
+                                   :profile profile}]]
+
+     [:& dropdown {:show @show-team-opts-ddwn?
+                   :on-close #(reset! show-team-opts-ddwn? false)}
+      [:& team-options-dropdown {:team team
+                                 :profile profile}]]]))
+
+(mf/defc sidebar-content
+  [{:keys [projects profile section team project search-term] :as props}]
+  (let [default-project-id
+        (->> (vals projects)
+             (d/seek :is-default)
+             (:id))
+
+        projects?   (= section :dashboard-projects)
+        fonts?      (= section :dashboard-fonts)
+        libs?       (= section :dashboard-libraries)
+        drafts?     (and (= section :dashboard-files)
+                         (= (:id project) default-project-id))
+
+        go-projects
+        (mf/use-callback
+         (mf/deps team)
+         (st/emitf (rt/nav :dashboard-projects {:team-id (:id team)})))
+
+        go-fonts
+        (mf/use-callback
+         (mf/deps team)
+         (st/emitf (rt/nav :dashboard-fonts {:team-id (:id team)})))
+
+        go-drafts
+        (mf/use-callback
+         (mf/deps team default-project-id)
+         (fn []
+           (st/emit! (rt/nav :dashboard-files
+                             {:team-id (:id team)
+                              :project-id default-project-id}))))
+        go-libs
+        (mf/use-callback
+         (mf/deps team)
+         (st/emitf (rt/nav :dashboard-libraries {:team-id (:id team)})))
+
+        pinned-projects
+        (->> (vals projects)
+             (remove :is-default)
+             (filter :is-pinned))]
+
+    [:div.sidebar-content
+     [:& sidebar-team-switch {:team team :profile profile}]
+     [:hr]
+     [:& sidebar-search {:search-term search-term
+                         :team-id (:id team)}]
+     [:div.sidebar-content-section
+      [:ul.sidebar-nav.no-overflow
+       [:li.recent-projects
+        {:on-click go-projects
+         :class-name (when projects? "current")}
+        [:span.element-title (tr "labels.projects")]]
+
+       [:li {:on-click go-drafts
+             :class-name (when drafts? "current")}
+        [:span.element-title (tr "labels.drafts")]]
+
+
+       [:li {:on-click go-libs
+             :class-name (when libs? "current")}
+        [:span.element-title (tr "labels.shared-libraries")]]]]
+
+     [:hr]
+
+     [:div.sidebar-content-section
+      [:ul.sidebar-nav.no-overflow
+       [:li.recent-projects
+        {:on-click go-fonts
+         :class-name (when fonts? "current")}
+        [:span.element-title (tr "labels.fonts")]]]]
+
+     [:hr]
+     [:div.sidebar-content-section
+      (if (seq pinned-projects)
+        [:ul.sidebar-nav
+         (for [item pinned-projects]
+           [:& sidebar-project
+            {:item item
+             :key (:id item)
+             :id (:id item)
+             :team-id (:id team)
+             :selected? (= (:id item) (:id project))}])]
+        [:div.sidebar-empty-placeholder
+         [:span.icon i/pin]
+         [:span.text (tr "dashboard.no-projects-placeholder")]])]]))
+
+
+(mf/defc profile-section
+  [{:keys [profile team] :as props}]
+  (let [show  (mf/use-state false)
+        photo (cfg/resolve-profile-photo-url profile)
+
+        on-click
+        (mf/use-callback
+         (fn [section event]
+           (dom/stop-propagation event)
+           (if (keyword? section)
+             (st/emit! (rt/nav section))
+             (st/emit! section))))]
+
+    [:div.profile-section
+     [:div.profile {:on-click #(reset! show true)}
+      [:img {:src photo}]
+      [:span (:fullname profile)]
+
+     [:& dropdown {:on-close #(reset! show false)
+                   :show @show}
+      [:ul.dropdown
+       [:li {:on-click (partial on-click :settings-profile)}
+        [:span.icon i/user]
+        [:span.text (tr "labels.profile")]]
+       [:li {:on-click (partial on-click :settings-password)}
+        [:span.icon i/lock]
+        [:span.text (tr "labels.password")]]
+       [:li {:on-click (partial on-click (du/logout))}
+        [:span.icon i/exit]
+        [:span.text (tr "labels.logout")]]
+
+       (when cfg/feedback-enabled
+         [:li.feedback {:on-click (partial on-click :settings-feedback)}
+          [:span.icon i/msg-info]
+          [:span.text (tr "labels.give-feedback")]
+          [:span.primary-badge "ALPHA"]])]]]
+
+     (when (and team profile)
+       [:& comments-section {:profile profile
+                             :team team}])]))
+
+(mf/defc sidebar
+  {::mf/wrap-props false
+   ::mf/wrap [mf/memo]}
+  [props]
+  (let [team    (obj/get props "team")
+        profile (obj/get props "profile")]
+    [:div.dashboard-sidebar
+     [:div.sidebar-inside
+      [:> sidebar-content props]
+      [:& profile-section
+       {:profile profile
+        :team team}]]]))

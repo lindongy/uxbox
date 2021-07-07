@@ -2,33 +2,33 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.data.workspace.notifications
   (:require
+   [app.common.data :as d]
+   [app.common.geom.point :as gpt]
+   [app.common.pages :as cp]
+   [app.common.spec :as us]
+   [app.common.transit :as t]
+   [app.common.uri :as u]
+   [app.config :as cf]
+   [app.main.data.workspace.changes :as dch]
+   [app.main.data.workspace.libraries :as dwl]
+   [app.main.data.workspace.persistence :as dwp]
+   [app.main.streams :as ms]
+   [app.util.time :as dt]
+   [app.util.websockets :as ws]
    [beicon.core :as rx]
    [cljs.spec.alpha :as s]
    [clojure.set :as set]
-   [potok.core :as ptk]
-   [app.common.data :as d]
-   [app.common.spec :as us]
-   [app.main.repo :as rp]
-   [app.main.store :as st]
-   [app.main.streams :as ms]
-   [app.main.data.workspace.common :as dwc]
-   [app.main.data.workspace.persistence :as dwp]
-   [app.util.avatars :as avatars]
-   [app.common.geom.point :as gpt]
-   [app.util.time :as dt]
-   [app.util.transit :as t]
-   [app.util.websockets :as ws]))
+   [potok.core :as ptk]))
 
+(declare process-message)
 (declare handle-presence)
 (declare handle-pointer-update)
-(declare handle-page-change)
+(declare handle-file-change)
+(declare handle-library-change)
 (declare handle-pointer-send)
 (declare send-keepalive)
 
@@ -36,14 +36,24 @@
 (s/def ::message
   (s/keys :req-un [::type]))
 
+(defn prepare-uri
+  [params]
+  (let [base (-> (u/join cf/public-uri "ws/notifications")
+                 (assoc :query (u/map->query-string params)))]
+    (cond-> base
+      (= "https" (:scheme base))
+      (assoc :scheme "wss")
+
+      (= "http" (:scheme base))
+      (assoc :scheme "ws"))))
+
 (defn initialize
   [file-id]
   (ptk/reify ::initialize
     ptk/UpdateEvent
     (update [_ state]
       (let [sid (:session-id state)
-            uri (ws/uri "/ws/notifications" {:file-id file-id
-                                             :session-id sid})]
+            uri (prepare-uri {:file-id file-id :session-id sid})]
         (assoc-in state [:ws file-id] (ws/open uri))))
 
     ptk/WatchEvent
@@ -52,33 +62,60 @@
             stoper   (rx/filter #(= ::finalize %) stream)
             interval (* 1000 60)]
         (->> (rx/merge
+              ;; Each 60 seconds send a keepalive message for maintain
+              ;; this socket open.
               (->> (rx/timer interval interval)
                    (rx/map #(send-keepalive file-id)))
-              (->> (ws/-stream wsession)
-                   (rx/filter #(= :message (:type %)))
-                   (rx/map (comp t/decode :payload))
-                   (rx/filter #(s/valid? ::message %))
-                   (rx/map (fn [{:keys [type] :as msg}]
-                             (case type
-                               :presence (handle-presence msg)
-                               :pointer-update (handle-pointer-update msg)
-                               :page-change (handle-page-change msg)
-                               ::unknown))))
 
+              ;; Process all incoming messages.
+              (->> (ws/-stream wsession)
+                   (rx/filter ws/message?)
+                   (rx/map (comp t/decode-str :payload))
+                   (rx/filter #(s/valid? ::message %))
+                   (rx/map process-message))
+
+              (rx/of (handle-presence {:type :connect
+                                       :session-id (:session-id state)
+                                       :profile-id (:profile-id state)}))
+
+              ;; Send back to backend all pointer messages.
               (->> stream
                    (rx/filter ms/pointer-event?)
                    (rx/sample 50)
                    (rx/map #(handle-pointer-send file-id (:pt %)))))
-
              (rx/take-until stoper))))))
 
-(defn send-keepalive
+(defn- process-message
+  [{:keys [type] :as msg}]
+  (case type
+    :connect        (handle-presence msg)
+    :presence       (handle-presence msg)
+    :disconnect     (handle-presence msg)
+    :pointer-update (handle-pointer-update msg)
+    :file-change    (handle-file-change msg)
+    :library-change (handle-library-change msg)
+    ::unknown))
+
+(defn- send-keepalive
   [file-id]
   (ptk/reify ::send-keepalive
     ptk/EffectEvent
-    (effect [_ state stream]
+    (effect [_ state _]
       (when-let [ws (get-in state [:ws file-id])]
-        (ws/-send ws (t/encode {:type :keepalive}))))))
+        (ws/send! ws {:type :keepalive})))))
+
+(defn- handle-pointer-send
+  [file-id point]
+  (ptk/reify ::handle-pointer-update
+    ptk/EffectEvent
+    (effect [_ state _]
+      (let [ws (get-in state [:ws file-id])
+            pid (:current-page-id state)
+            msg {:type :pointer-update
+                 :page-id pid
+                 :x (:x point)
+                 :y (:y point)}]
+        (ws/send! ws msg)))))
 
 ;; --- Finalize Websocket
 
@@ -86,7 +123,7 @@
   [file-id]
   (ptk/reify ::finalize
     ptk/WatchEvent
-    (watch [_ state stream]
+    (watch [_ state _]
       (when-let [ws (get-in state [:ws file-id])]
         (ws/-close ws))
       (rx/of ::finalize))))
@@ -108,69 +145,97 @@
     })
 
 (defn handle-presence
-  [{:keys [sessions] :as msg}]
-  (letfn [(assign-color [sessions session]
-            (if (string? (:color session))
-              session
-              (let [used (into #{}
-                               (comp (map second)
-                                     (map :color)
-                                     (remove nil?))
-                               sessions)
-                    avail (set/difference presence-palette used)
-                    color (or (first avail) "#000000")]
-                (assoc session :color color))))
-          (update-sessions [previous profiles]
-            (reduce (fn [current [session-id profile-id]]
-                      (let [profile (get profiles profile-id)
-                            session {:id session-id
-                                     :fullname (:fullname profile)
-                                     :photo-uri (or (:photo-uri profile)
-                                                    (avatars/generate {:name (:fullname profile)}))}
-                            session (assign-color current session)]
-                        (assoc current session-id session)))
-                    (select-keys previous (map first sessions))
-                    (filter (fn [[sid]] (not (contains? previous sid))) sessions)))]
+  [{:keys [type session-id profile-id] :as message}]
+  (letfn [(get-next-color [presence]
+            (let [xfm   (comp (map second)
+                              (map :color)
+                              (remove nil?))
+                  used  (into #{} xfm presence)
+                  avail (set/difference presence-palette used)]
+              (or (first avail) "#000000")))
+
+          (update-color [color presence]
+            (if (some? color)
+              color
+              (get-next-color presence)))
+
+          (update-sesion [session presence]
+            (-> session
+                (assoc :id session-id)
+                (assoc :profile-id profile-id)
+                (assoc :updated-at (dt/now))
+                (update :color update-color presence)))
+
+          (update-presence [presence]
+            (-> presence
+                (update session-id update-sesion presence)
+                (d/without-nils)))
+
+          ]
 
     (ptk/reify ::handle-presence
       ptk/UpdateEvent
       (update [_ state]
-        (let [profiles  (:workspace-users state)]
-          (update state :workspace-presence update-sessions profiles))))))
+        ;; (let [profiles (:users state)]
+        (if (= :disconnect type)
+          (update state :workspace-presence dissoc session-id)
+          (update state :workspace-presence update-presence))))))
 
 (defn handle-pointer-update
-  [{:keys [page-id profile-id session-id x y] :as msg}]
+  [{:keys [page-id session-id x y] :as msg}]
   (ptk/reify ::handle-pointer-update
     ptk/UpdateEvent
     (update [_ state]
-      (let [profile  (get-in state [:workspace-users profile-id])]
-        (update-in state [:workspace-presence session-id]
-                   (fn [session]
-                     (assoc session
-                            :point (gpt/point x y)
-                            :updated-at (dt/now)
-                            :page-id page-id)))))))
+      (update-in state [:workspace-presence session-id]
+                 (fn [session]
+                   (assoc session
+                          :point (gpt/point x y)
+                          :updated-at (dt/now)
+                          :page-id page-id))))))
 
-(defn handle-pointer-send
-  [file-id point]
-  (ptk/reify ::handle-pointer-update
-    ptk/EffectEvent
-    (effect [_ state stream]
-      (let [ws (get-in state [:ws file-id])
-            sid (:session-id state)
-            pid (get-in state [:workspace-page :id])
-            msg {:type :pointer-update
-                 :page-id pid
-                 :x (:x point)
-                 :y (:y point)}]
-        (ws/-send ws (t/encode msg))))))
+(s/def ::type keyword?)
+(s/def ::profile-id uuid?)
+(s/def ::file-id uuid?)
+(s/def ::session-id uuid?)
+(s/def ::revn integer?)
+(s/def ::changes ::cp/changes)
 
-(defn handle-page-change
-  [msg]
-  (ptk/reify ::handle-page-change
+(s/def ::file-change-event
+  (s/keys :req-un [::type ::profile-id ::file-id ::session-id ::revn ::changes]))
+
+(defn handle-file-change
+  [{:keys [file-id changes] :as msg}]
+  (us/assert ::file-change-event msg)
+  (ptk/reify ::handle-file-change
     ptk/WatchEvent
-    (watch [_ state stream]
-      (rx/of (dwp/shapes-changes-persisted msg)
-             (dwc/update-page-indices (:page-id msg))))))
+    (watch [_ _ _]
+      (let [changes-by-pages (group-by :page-id changes)
+            process-page-changes
+            (fn [[page-id changes]]
+              (dch/update-indices page-id changes))]
 
+        (rx/merge
+         (rx/of (dwp/shapes-changes-persisted file-id msg))
+
+         (when-not (empty? changes-by-pages)
+           (rx/from (map process-page-changes changes-by-pages))))))))
+
+(s/def ::library-change-event
+  (s/keys :req-un [::type
+                   ::profile-id
+                   ::file-id
+                   ::session-id
+                   ::revn
+                   ::modified-at
+                   ::changes]))
+
+(defn handle-library-change
+  [{:keys [file-id modified-at changes revn] :as msg}]
+  (us/assert ::library-change-event msg)
+  (ptk/reify ::handle-library-change
+    ptk/WatchEvent
+    (watch [_ state _]
+      (when (contains? (:workspace-libraries state) file-id)
+        (rx/of (dwl/ext-library-changed file-id modified-at revn changes)
+               (dwl/notify-sync-file file-id))))))
 

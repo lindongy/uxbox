@@ -2,18 +2,15 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.data.workspace.grid
   (:require
-   [beicon.core :as rx]
-   [potok.core :as ptk]
    [app.common.data :as d]
    [app.common.spec :as us]
-   [app.main.data.workspace.common :as dwc]))
+   [app.main.data.workspace.changes :as dch]
+   [beicon.core :as rx]
+   [potok.core :as ptk]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Grid
@@ -21,8 +18,8 @@
 
 (defonce ^:private default-square-params
   {:size 16
-   :color {:value "#59B9E2"
-           :opacity 0.2}})
+   :color {:color "#59B9E2"
+           :opacity 0.4}})
 
 (defonce ^:private default-layout-params
   {:size 12
@@ -30,7 +27,7 @@
    :item-length nil
    :gutter 8
    :margin 0
-   :color {:value "#DE4762"
+   :color {:color "#DE4762"
            :opacity 0.1}})
 
 (defonce default-grid-params
@@ -43,15 +40,15 @@
   (us/assert ::us/uuid frame-id)
   (ptk/reify ::add-frame-grid
     ptk/WatchEvent
-    (watch [_ state stream]
+    (watch [_ state _]
       (let [page-id (:current-page-id state)
-            data    (get-in state [:workspace-data page-id])
+            data    (get-in state [:workspace-data :pages-index page-id])
             params  (or (get-in data [:options :saved-grids :square])
                         (:square default-grid-params))
             grid    {:type :square
                      :params params
                      :display true}]
-        (rx/of (dwc/update-shapes [frame-id]
+        (rx/of (dch/update-shapes [frame-id]
                                   (fn [obj] (update obj :grids (fnil #(conj % grid) [])))))))))
 
 
@@ -59,27 +56,30 @@
   [frame-id index]
   (ptk/reify ::set-frame-grid
     ptk/WatchEvent
-    (watch [_ state stream]
-      (rx/of (dwc/update-shapes [frame-id] (fn [o] (update o :grids (fnil #(d/remove-at-index % index) []))))))))
+    (watch [_ _ _]
+      (rx/of (dch/update-shapes [frame-id] (fn [o] (update o :grids (fnil #(d/remove-at-index % index) []))))))))
 
 (defn set-frame-grid
   [frame-id index data]
   (ptk/reify ::set-frame-grid
     ptk/WatchEvent
-    (watch [_ state stream]
-      (rx/of (dwc/update-shapes [frame-id] #(assoc-in % [:grids index] data))))))
+    (watch [_ _ _]
+      (rx/of (dch/update-shapes [frame-id] #(assoc-in % [:grids index] data))))))
 
 (defn set-default-grid
   [type params]
   (ptk/reify ::set-default-grid
     ptk/WatchEvent
-    (watch [_ state stream]
+    (watch [it state _]
       (let [pid (:current-page-id state)
-            prev-value (get-in state [:workspace-data pid :options :saved-grids type])]
-        (rx/of (dwc/commit-changes [{:type :set-option
-                                     :option [:saved-grids type]
-                                     :value params}]
-                                   [{:type :set-option
-                                     :option [:saved-grids type]
-                                     :value prev-value}]
-                                   {:commit-local? true}))))))
+            prev-value (get-in state [:workspace-data :pages-index pid :options :saved-grids type])]
+        (rx/of (dch/commit-changes
+                {:redo-changes [{:type :set-option
+                                 :page-id pid
+                                 :option [:saved-grids type]
+                                 :value params}]
+                 :undo-changes [{:type :set-option
+                                 :page-id pid
+                                 :option [:saved-grids type]
+                                 :value prev-value}]
+                 :origin it}))))))

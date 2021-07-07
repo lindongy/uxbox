@@ -1,0 +1,91 @@
+version: 2
+jobs:
+  build:
+    docker:
+      # specify the version you desire here
+      - image: penpotapp/devenv:latest
+
+      # Specify service dependencies here if necessary
+      # CircleCI maintains a library of pre-built images
+      # documented at https://circleci.com/docs/2.0/circleci-images/
+      # - image: circleci/postgres:9.4
+      - image: circleci/postgres:13.3-ram
+        environment:
+          POSTGRES_USER: penpot_test
+          POSTGRES_PASSWORD: penpot_test
+          POSTGRES_DB: penpot_test
+
+      - image: circleci/redis:6.0.8
+
+    working_directory: ~/repo
+
+    environment:
+      # Customize the JVM maximum heap limit
+      JVM_OPTS: -Xmx1g
+
+    steps:
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+         keys:
+           - v1-dependencies-{{ checksum "backend/deps.edn" }}-{{ checksum "frontend/deps.edn"}}-{{ checksum "common/deps.edn"}}
+           # fallback to using the latest cache if no exact match is found
+           - v1-dependencies-
+
+      - run:
+          name: common lint
+          working_directory: "./common"
+          command: "clj-kondo --parallel --lint src/"
+
+      - run:
+          name: frontend lint
+          working_directory: "./frontend"
+          command: "clj-kondo --parallel --lint src/"
+
+      - run:
+          name: backend lint
+          working_directory: "./backend"
+          command: "clj-kondo --parallel --lint src/"
+
+      # run backend test
+      - run:
+          name: backend test
+          working_directory: "./backend"
+          command: "clojure -X:dev:test"
+          environment:
+            PENPOT_TEST_DATABASE_URI: "postgresql://localhost/penpot_test"
+            PENPOT_TEST_DATABASE_USERNAME: penpot_test
+            PENPOT_TEST_DATABASE_PASSWORD: penpot_test
+            PENPOT_TEST_REDIS_URI: "redis://localhost/1"
+
+      - run:
+          name: frontend tests
+          working_directory: "./frontend"
+          command: |
+            yarn install
+            clojure -M:dev:shadow-cljs compile test
+            node target/tests.js
+
+          environment:
+            JAVA_HOME: /usr/lib/jvm/openjdk16
+            PATH: /usr/local/nodejs/bin/:/usr/local/bin:/bin:/usr/bin:/usr/lib/jvm/openjdk16/bin
+
+      - run:
+          working_directory: "./common"
+          name: common tests
+          command: |
+            yarn install
+            clojure -M:dev:shadow-cljs compile test
+            node target/tests.js
+            clojure -X:dev:test
+
+          environment:
+            JAVA_HOME: /usr/lib/jvm/openjdk16
+            PATH: /usr/local/nodejs/bin/:/usr/local/bin:/bin:/usr/bin:/usr/lib/jvm/openjdk16/bin
+
+      - save_cache:
+         paths:
+           - ~/.m2
+         key: v1-dependencies-{{ checksum "backend/deps.edn" }}-{{ checksum "frontend/deps.edn"}}-{{ checksum "common/deps.edn"}}
+

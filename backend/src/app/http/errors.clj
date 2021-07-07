@@ -2,66 +2,143 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2016-2019 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.http.errors
   "A errors handling for the http server."
   (:require
-   [clojure.tools.logging :as log]
+   [app.common.exceptions :as ex]
+   [app.common.uuid :as uuid]
+   [app.util.logging :as l]
    [cuerdas.core :as str]
-   [app.metrics :as mtx]
-   [io.aviso.exception :as e]))
+   [expound.alpha :as expound]))
+
+(defn- explain-error
+  [error]
+  (with-out-str
+    (expound/printer (:data error))))
+
+(defn get-error-context
+  [request error]
+  (let [edata (ex-data error)]
+    (merge
+     {:id      (uuid/next)
+      :path    (:uri request)
+      :method  (:request-method request)
+      :params  (:params request)
+      :data    edata}
+     (let [headers (:headers request)]
+       {:user-agent (get headers "user-agent")
+        :frontend-version (get headers "x-frontend-version" "unknown")})
+     (when (and (map? edata) (:data edata))
+       {:explain (explain-error edata)}))))
 
 (defmulti handle-exception
-  (fn [err & rest]
-    (:type (ex-data err))))
+  (fn [err & _rest]
+    (let [edata (ex-data err)]
+      (or (:type edata)
+          (class err)))))
+
+(defmethod handle-exception :authentication
+  [err _]
+  {:status 401 :body (ex-data err)})
+
+
+(defmethod handle-exception :restriction
+  [err _]
+  {:status 400 :body (ex-data err)})
 
 (defmethod handle-exception :validation
   [err req]
   (let [header (get-in req [:headers "accept"])
-        response (ex-data err)]
-    (cond
-      (and (str/starts-with? header "text/html")
-           (= :spec-validation (:code response)))
+        edata  (ex-data err)]
+    (if (and (= :spec-validation (:code edata))
+             (str/starts-with? header "text/html"))
       {:status 400
        :headers {"content-type" "text/html"}
-       :body (str "<pre style='font-size:16px'>" (:explain response) "</pre>\n")}
-
-      :else
+       :body (str "<pre style='font-size:16px'>"
+                  (explain-error edata)
+                  "</pre>\n")}
       {:status 400
-       :body response})))
+       :body   (cond-> edata
+                 (map? (:data edata))
+                 (-> (assoc :explain (explain-error edata))
+                     (dissoc :data)))})))
 
-(defmethod handle-exception :ratelimit
-  [err req]
-  {:status 429
-   :headers {"retry-after" 1000}
-   :body ""})
+(defmethod handle-exception :assertion
+  [error request]
+  (let [edata (ex-data error)
+        cdata (get-error-context request error)]
+    (l/update-thread-context! cdata)
+    (l/error :hint "internal error: assertion"
+             :error-id (str (:id cdata))
+             :cause error)
+
+    {:status 500
+     :body {:type :server-error
+            :code :assertion
+            :data (-> edata
+                      (assoc :explain (explain-error edata))
+                      (dissoc :data))}}))
 
 (defmethod handle-exception :not-found
-  [err req]
-  (let [response (ex-data err)]
-    {:status 404
-     :body response}))
-
-(defmethod handle-exception :service-error
-  [err req]
-  (handle-exception (.getCause ^Throwable err) req))
-
-(defmethod handle-exception :parse
-  [err req]
-  {:status 400
-   :body {:type :parse
-          :message (ex-message err)}})
+  [err _]
+  {:status 404 :body (ex-data err)})
 
 (defmethod handle-exception :default
-  [err req]
-  (log/error "Unhandled exception on request:" (:path req) "\n"
-             (with-out-str
-                (.printStackTrace ^Throwable err (java.io.PrintWriter. *out*))))
-  {:status 500
-   :body {:type :internal-error
-          :message (ex-message err)
-          :data (ex-data err)}})
+  [error request]
+  (let [edata (ex-data error)]
+    ;; NOTE: this is a special case for the idle-in-transaction error;
+    ;; when it happens, the connection is automatically closed and
+    ;; next-jdbc combines the two errors in a single ex-info. We only
+    ;; need the :handling error, because the :rollback error will be
+    ;; always "connection closed".
+    (if (and (ex/exception? (:rollback edata))
+             (ex/exception? (:handling edata)))
+      (handle-exception (:handling edata) request)
+      (let [cdata (get-error-context request error)]
+        (l/update-thread-context! cdata)
+        (l/error :hint "internal error"
+                 :error-message (ex-message error)
+                 :error-id (str (:id cdata))
+                 :cause error)
+        {:status 500
+         :body {:type :server-error
+                :code :unexpected
+                :hint (ex-message error)
+                :data edata}}))))
+
+(defmethod handle-exception org.postgresql.util.PSQLException
+  [error request]
+  (let [cdata (get-error-context request error)
+        state (.getSQLState ^java.sql.SQLException error)]
+
+    (l/update-thread-context! cdata)
+    (l/error :hint "psql exception"
+             :error-message (ex-message error)
+             :error-id (str (:id cdata))
+             :sql-state state
+             :cause error)
+
+    (cond
+      (= state "57014")
+      {:status 504
+       :body {:type :server-timeout
+              :code :statement-timeout
+              :hint (ex-message error)}}
+
+      (= state "25P03")
+      {:status 504
+       :body {:type :server-timeout
+              :code :idle-in-transaction-timeout
+              :hint (ex-message error)}}
+
+      :else
+      {:status 500
+       :body {:type :server-error
+              :code :psql-exception
+              :hint (ex-message error)
+              :state state}})))
 
 (defn handle
   [error req]

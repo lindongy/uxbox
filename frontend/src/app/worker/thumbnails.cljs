@@ -2,21 +2,17 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.worker.thumbnails
   (:require
-   [rumext.alpha :as mf]
-   [beicon.core :as rx]
-   [promesa.core :as p]
-   [app.main.fonts :as fonts]
+   ["react-dom/server" :as rds]
    [app.main.exports :as exports]
+   [app.main.fonts :as fonts]
+   [app.util.http :as http]
    [app.worker.impl :as impl]
-   [app.util.http-api :as http]
-   ["react-dom/server" :as rds]))
+   [beicon.core :as rx]
+   [rumext.alpha :as mf]))
 
 (defn- handle-response
   [response]
@@ -32,26 +28,31 @@
                :code (:error response)})))
 
 (defn- request-page
-  [id]
-  (let [uri "/api/w/query/page"]
-    (p/create
-     (fn [resolve reject]
-       (->> (http/send! {:uri uri
-                         :query {:id id}
-                         :method :get})
-            (rx/mapcat handle-response)
-            (rx/subs (fn [body]
-                       (resolve (:data body)))
-                     (fn [error]
-                       (reject error))))))))
+  [file-id page-id]
+  (let [uri "/api/rpc/query/page"]
+    (->> (http/send!
+          {:uri uri
+           :query {:file-id file-id :id page-id :strip-thumbnails true}
+           :method :get})
+         (rx/map http/conditional-decode-transit)
+         (rx/mapcat handle-response))))
+
+(defonce cache (atom {}))
+
+(defn render-page
+  [data ckey]
+  (let [prev (get @cache ckey)]
+    (if (= (:data prev) data)
+      (:result prev)
+      (let [elem   (mf/element exports/page-svg #js {:data data :width "290" :height "150" :thumbnails? true})
+            result (rds/renderToStaticMarkup elem)]
+        (swap! cache assoc ckey {:data data :result result})
+        result))))
 
 (defmethod impl/handler :thumbnails/generate
-  [{:keys [id] :as message}]
-  (p/then
-   (request-page id)
-   (fn [data]
-     (let [elem (mf/element exports/page-svg #js {:data data
-                                                  :width "290"
-                                                  :height "150"})]
-       {:svg (rds/renderToStaticMarkup elem)
-        :fonts @fonts/loaded}))))
+  [{:keys [file-id page-id] :as message}]
+  (->> (request-page file-id page-id)
+       (rx/map
+        (fn [data]
+          {:svg (render-page data #{file-id page-id})
+           :fonts @fonts/loaded}))))

@@ -17,11 +17,13 @@
   font-size: $fs13;
   height: 30px;
   justify-content: center;
+  min-width: 25px;
   padding: 0 1rem;
   transition: all .4s;
+  text-decoration: none !important;
   svg {
-    height: 15px;
-    width: 15px;
+    height: 16px;
+    width: 16px;
   }
   &.btn-large {
     font-size: $fs14;
@@ -49,7 +51,7 @@
 .btn-secondary {
   @extend %btn;
   background: $color-white;
-  border: 1px solid $color-black;
+  border: 1px solid $color-gray-20;
   color: $color-black;
   &:hover {
     background: $color-primary;
@@ -97,16 +99,18 @@
 
 .btn-icon-light {
   @extend %btn;
-  background: $color-gray-10;
-  color: $color-gray-40;
+  background: $color-white;
+  border: 1px solid $color-gray-20;
+  color: $color-black;
   padding: $x-small;
   svg {
-    fill: $color-gray-40;
+    fill: $color-black;
   }
   &:hover {
     background: $color-primary;
+    border-color: $color-primary;
     svg {
-      fill: $color-gray-60;
+      fill: $color-black;
     }
   }
 }
@@ -114,10 +118,10 @@
 .btn-icon-basic {
   @extend %btn;
   background: transparent;
-  color: $color-gray-60;
+  color: $color-gray-20;
   padding: $x-small;
   svg {
-    fill: $color-gray-60;
+    fill: $color-gray-20;
   }
   &:hover {
     background: transparent;
@@ -364,14 +368,25 @@ ul.slider-dots {
   position: relative;
   width: 75px;
 
-  &::after {
+  &::after,
+  .after {
     color: $color-gray-20;
     font-size: $fs12;
     height: 20px;
     position: absolute;
-    right: 3px;
+    right: $small;
+    text-align: right;
     top: 26%;
-    width: 20px;
+    width: 18px;
+  }
+
+  .after {
+      width: auto;
+      right: 6px;
+  }
+
+  &.mini {
+    width: 43px;
   }
 
   // Input amounts
@@ -434,6 +449,10 @@ ul.slider-dots {
       content: "Y";
     }
   }
+
+  &.large {
+    min-width: 7rem;
+  }
 }
 
 input,
@@ -441,7 +460,7 @@ select {
   background-color: $color-white;
   box-sizing: border-box;
   color: $color-gray-60;
-  font-family: "sourcesanspro", sans-serif;
+  font-family: "worksans", sans-serif;
   font-size: $fs14;
   margin-bottom: $medium;
   -webkit-appearance: none;
@@ -530,7 +549,7 @@ input.element-name {
   @extend .input-text;
   background-image: url("/images/icons/arrow-down-white.svg");
   background-repeat: no-repeat;
-  background-position: 95% 48%;
+  background-position: calc(100% - 4px) 48%;
   background-size: 10px;
   cursor: pointer;
 
@@ -546,27 +565,28 @@ input.element-name {
 .input-radio,
 .input-checkbox {
   align-items: center;
+  color: $color-gray-40;
   display: flex;
   margin-bottom: 10px;
   margin-top: 10px;
   padding-left: 0px;
 
   label{
-    align-items: center;
     cursor: pointer;
     display: flex;
     margin-right: 15px;
-    font-size: $fs13;
+    font-size: $fs12;
 
     &:before{
       content:"";
       width: 20px;
       height: 20px;
       margin-right: 10px;
-      background-color: $color-gray-50;
-      border: 1px solid $color-gray-60;
-      box-shadow: inset 0 0 0 0 $color-primary ;
+      background-color: $color-gray-10;
+      border: 1px solid $color-gray-30;
+      box-shadow: inset 0 0 0 0 $color-primary;
       box-sizing: border-box;
+      flex-shrink: 0;
     }
 
   }
@@ -661,7 +681,6 @@ input[type=radio]:checked + label:before{
 
   label {
     transition: border 0.2s linear 0s, color 0.2s linear 0s;
-    white-space: nowrap;
     position: relative;
 
     &:before {
@@ -672,11 +691,11 @@ input[type=radio]:checked + label:before{
 
     &::after {
       display: inline-block;
-      width: 16px;
-      height: 16px;
+      width: 20px;
+      height: 20px;
       position: absolute;
       left: 3.2px;
-      top: 0px;
+      top: 0;
       font-size: $fs11;
       transition: border 0.2s linear 0s, color 0.2s linear 0s;
     }
@@ -717,7 +736,7 @@ input[type=radio]:checked + label:before{
 
       &::after {
         content:"✓";
-        color: #000000;
+        color: #ffffff;
         font-size: $fs16;
       }
 
@@ -946,16 +965,8 @@ input[type=range]:focus::-ms-fill-upper {
     }
   }
 
+  // the default is the `right`
   &.tooltip-bottom {
-    &:hover {
-      &::after {
-        left: -100%;
-        top: 130%;
-      }
-    }
-  }
-
-  &.tooltip-bottom-right {
     &:hover {
       &::after {
         left: 0;
@@ -992,6 +1003,16 @@ input[type=range]:focus::-ms-fill-upper {
     }
   }
 
+ &.tooltip-left {
+    &:hover {
+      &::after {
+        left: unset;
+        right: 130%;
+        top: 15%;
+      }
+    }
+  }
+
   &.tooltip-hover {
     &:hover {
       &::after {
@@ -1014,69 +1035,8 @@ input[type=range]:focus::-ms-fill-upper {
 
 // Messages
 
-// Banner top
-
 .banner {
-  top: 0;
-  left: 0px;
-  width: 100%;
-  height: 40px;
-  z-index: 13;
-
-  display: flex;
-  justify-content: center;
-  align-items: center;
-
-  .btn-close {
-    position: absolute;
-    right: 0px;
-    top: 0px;
-    width: 40px;
-    height: 40px;
-
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    opacity: .35;
-
-    svg {
-      fill: $color-black;
-      height: 18px;
-      width: 18px;
-      transform: rotate(45deg);
-    }
-
-    &:hover {
-      opacity: .8;
-    }
-  }
-
-  .content {
-    align-items: center;
-    color: $color-white;
-    display: flex;
-    justify-content: center;
-    max-width: 60%;
-
-    .icon {
-      display: flex;
-      margin-right: $medium;
-      svg {
-        fill: $color-white;
-        height: 20px;
-        width: 20px;
-      }
-    }
-
-    span {
-      font-size: $fs15;
-    }
-  }
-
-  &.fixed {
-    position: fixed;
-  }
+  position: relative;
 
   &.error {
     background-color: $color-danger;
@@ -1094,30 +1054,12 @@ input[type=range]:focus::-ms-fill-upper {
     background-color: $color-info;
   }
 
-  &.quick {
-    .btn-close {
-      display: none;
-    }
-  }
-
   &.hide {
     @include animation(0, .6s, fadeOutUp);
   }
-}
-
-.inline-banner {
-  display: flex;
-  margin-bottom: $big;
-  min-height: 40px;
-  width: 100%;
 
   .icon {
     display: flex;
-    flex-shrink: 0;
-    justify-content: center;
-    margin-right: $small;
-    padding: $small;
-    width: 40px;
 
     svg {
       fill: $color-white;
@@ -1127,63 +1069,39 @@ input[type=range]:focus::-ms-fill-upper {
   }
 
   .content {
-    display: flex;
-    flex-direction: column;
-  }
+    &.bottom-actions {
+      flex-direction: column;
 
-  .main {
-    display: flex;
-  }
-
-  .extra {
-    display: flex;
-    justify-content: flex-end;
-    padding: $small;
-
-    > div:not(:last-child) {
-      margin-right: $small;
+      .actions {
+        margin-top: $medium;
+        display: flex;
+        justify-content: flex-start;
+      }
     }
-  }
 
-  .text {
-    display: flex;
-    font-size: $fs14;
-    color: $color-black;
-    padding: $small;
-  }
+    &.inline-actions {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
 
-  &.error {
-    background-color: lighten($color-danger,30%);
-    .icon {
-      background-color: $color-danger;
-    }
-  }
+      .actions {
+        display: flex;
+        justify-content: flex-start;
 
-  &.success {
-    background-color: lighten($color-success,30%);
-    .icon {
-      background-color: $color-success;
-    }
-  }
-
-  &.warning {
-    background-color: lighten($color-warning,30%);
-    .icon {
-      background-color: $color-warning;
-    }
-  }
-
-  &.info {
-    background-color: lighten($color-info,30%);
-    .icon {
-      background-color: $color-info;
+        .btn-secondary {
+          margin-left: $medium;
+        }
+      }
     }
   }
 
   .btn-close {
-    width: 40px;
-    height: 40px;
-    flex-shrink: 0;
+    position: absolute;
+    right: 0px;
+    top: 0px;
+    width: 48px;
+    height: 48px;
+
     display: flex;
     justify-content: center;
     align-items: center;
@@ -1202,10 +1120,120 @@ input[type=range]:focus::-ms-fill-upper {
     }
   }
 
-  &.quick {
-    .btn-close {
-      display: none;
+  &.fixed {
+    border-radius: $br-small;
+    box-shadow: 0px 4px 4px rgba(0,0,0,0.2);
+    height: 48px;
+    max-width: 1000px;
+    min-width: 500px;
+    position: fixed;
+    padding-left: 16px;
+    top: 16px;
+    right: 16px;
+    z-index: 13;
+
+    display: flex;
+    align-items: center;
+
+    .wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding-right: 64px;
+
+      .icon {
+        margin-right: $medium;
+      }
+
+      .content {
+        color: $color-white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: $fs15;
+      }
     }
+  }
+
+  &.floating, &.inline {
+    min-height: 40px;
+
+    .wrapper {
+      display: flex;
+
+      .icon {
+        padding: $small;
+        width: 48px;
+        height: 48px;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .content {
+        color: $color-black;
+        display: flex;
+        font-size: $fs14;
+        padding: $small;
+        width: 100%;
+        align-items: center;
+      }
+    }
+
+    &.error {
+      .content {
+        background-color: lighten($color-danger,30%);
+      }
+    }
+
+    &.success {
+      .content {
+        background-color: lighten($color-success,30%);
+      }
+    }
+
+    &.warning {
+      .content {
+        background-color: lighten($color-warning,30%);
+      }
+    }
+
+    &.info {
+      .content {
+        background-color: lighten($color-info,30%);
+      }
+    }
+  }
+
+  &.floating {
+    box-shadow: 0px 4px 4px rgba(0, 0, 0, 0.18);
+    position: absolute;
+    top: 70px;
+    left: 0;
+    right: 0;
+    width: 35rem;
+    margin-left: auto;
+    margin-right: auto;
+    z-index: 20;
+
+    &.error {
+      border: 1px solid $color-danger;
+    }
+
+    &.success {
+      border: 1px solid $color-success;
+    }
+
+    &.warning {
+      border: 1px solid $color-warning;
+    }
+
+    &.info {
+      border: 1px solid $color-info;
+    }
+  }
+
+  &.inline {
+    width: 100%;
   }
 }
 

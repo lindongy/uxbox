@@ -2,30 +2,31 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.auth.login
   (:require
-   [cljs.spec.alpha :as s]
-   [beicon.core :as rx]
-   [rumext.alpha :as mf]
-   [app.config :as cfg]
    [app.common.spec :as us]
-   [app.main.ui.icons :as i]
-   [app.main.data.auth :as da]
+   [app.config :as cfg]
+   [app.main.data.messages :as dm]
+   [app.main.data.users :as du]
    [app.main.repo :as rp]
    [app.main.store :as st]
+   [app.main.ui.components.forms :as fm]
+   [app.main.ui.icons :as i]
    [app.main.ui.messages :as msgs]
-   [app.main.data.messages :as dm]
-   [app.main.ui.components.forms :refer [input submit-button form]]
-   [app.util.object :as obj]
    [app.util.dom :as dom]
-   [app.util.forms :as fm]
-   [app.util.i18n :refer [tr t]]
-   [app.util.router :as rt]))
+   [app.util.i18n :refer [tr]]
+   [app.util.router :as rt]
+   [beicon.core :as rx]
+   [cljs.spec.alpha :as s]
+   [rumext.alpha :as mf]))
+
+(def show-alt-login-buttons?
+  (or cfg/google-client-id
+      cfg/gitlab-client-id
+      cfg/github-client-id
+      cfg/oidc-client-id))
 
 (s/def ::email ::us/email)
 (s/def ::password ::us/not-empty-string)
@@ -33,89 +34,148 @@
 (s/def ::login-form
   (s/keys :req-un [::email ::password]))
 
-(defn- login-with-google
-  [event]
+(defn- login-with-oauth
+  [event provider params]
   (dom/prevent-default event)
-  (->> (rp/mutation! :login-with-google {})
+  (->> (rp/mutation! :login-with-oauth (assoc params :provider provider))
        (rx/subs (fn [{:keys [redirect-uri] :as rsp}]
                   (.replace js/location redirect-uri)))))
 
+(defn- login-with-ldap
+  [event params]
+  (dom/prevent-default event)
+  (dom/stop-propagation event)
+  (let [{:keys [on-error]} (meta params)]
+    (->> (rp/mutation! :login-with-ldap params)
+         (rx/subs (fn [profile]
+                    (if-let [token (:invitation-token profile)]
+                      (st/emit! (rt/nav :auth-verify-token {} {:token token}))
+                      (st/emit! (du/login-from-token {:profile profile}))))
+                  (fn [{:keys [type code] :as error}]
+                    (cond
+                      (and (= type :restriction)
+                           (= code :ldap-disabled))
+                      (st/emit! (dm/error (tr "errors.ldap-disabled")))
+
+                      (fn? on-error)
+                      (on-error error)))))))
+
 (mf/defc login-form
-  [{:keys [locale] :as props}]
-  (let [error? (mf/use-state false)
-        submit-event (mf/use-var da/login)
+  [{:keys [params] :as props}]
+  (let [error (mf/use-state false)
+        form  (fm/use-form :spec ::login-form
+                           :inital {})
 
         on-error
-        (fn [form event]
-          (reset! error? true))
+        (fn [_]
+          (reset! error (tr "errors.wrong-credentials")))
 
         on-submit
-        (fn [form event]
-          (reset! error? false)
-          (let [params (with-meta (:clean-data form)
-                         {:on-error on-error})]
-            (st/emit! (@submit-event params))))]
+        (mf/use-callback
+         (mf/deps form)
+         (fn [_]
+           (reset! error nil)
+           (let [params (with-meta (:clean-data @form)
+                          {:on-error on-error})]
+             (st/emit! (du/login params)))))
+
+        on-submit-ldap
+        (mf/use-callback
+         (mf/deps form)
+         (fn [event]
+           (let [params (merge (:clean-data @form) params)]
+             (login-with-ldap event (with-meta params {:on-error on-error})))))]
 
     [:*
-     (when @error?
+     (when-let [message @error]
        [:& msgs/inline-banner
         {:type :warning
-         :content (t locale "errors.auth.unauthorized")
-         :on-close #(reset! error? false)}])
+         :content message
+         :on-close #(reset! error nil)}])
 
-     [:& form {:on-submit on-submit
-               :spec ::login-form
-               :initial {}}
-      [:& input
-       {:name :email
-        :type "text"
-        :tab-index "2"
-        :help-icon i/at
-        :label (t locale "auth.email-label")}]
-      [:& input
-       {:type "password"
-        :name :password
-        :tab-index "3"
-        :help-icon i/eye
-        :label (t locale "auth.password-label")}]
-      [:& submit-button
-       {:label (t locale "auth.login-submit-label")
-        :on-click #(reset! submit-event da/login)}]
-      (when cfg/login-with-ldap
-        [:& submit-button
-         {:label (t locale "auth.login-with-ldap-submit-label")
-          :on-click #(reset! submit-event da/login-with-ldap)}])]]))
+     [:& fm/form {:on-submit on-submit :form form}
+      [:div.fields-row
+       [:& fm/input
+        {:name :email
+         :type "text"
+         :tab-index "2"
+         :help-icon i/at
+         :label (tr "auth.email")}]]
+      [:div.fields-row
+       [:& fm/input
+        {:type "password"
+         :name :password
+         :tab-index "3"
+         :help-icon i/eye
+         :label (tr "auth.password")}]]
+
+      [:div.buttons-stack
+       [:& fm/submit-button
+        {:label (tr "auth.login-submit")}]
+
+       (when cfg/login-with-ldap
+         [:& fm/submit-button
+          {:label (tr "auth.login-with-ldap-submit")
+           :on-click on-submit-ldap}])]]]))
+
+(mf/defc login-buttons
+  [{:keys [params] :as props}]
+  [:div.auth-buttons
+   (when cfg/google-client-id
+     [:a.btn-ocean.btn-large.btn-google-auth
+      {:on-click #(login-with-oauth % :google params)}
+      (tr "auth.login-with-google-submit")])
+
+   (when cfg/gitlab-client-id
+     [:a.btn-ocean.btn-large.btn-gitlab-auth
+      {:on-click #(login-with-oauth % :gitlab params)}
+      [:img.logo
+       {:src "/images/icons/brand-gitlab.svg"}]
+      (tr "auth.login-with-gitlab-submit")])
+
+   (when cfg/github-client-id
+     [:a.btn-ocean.btn-large.btn-github-auth
+      {:on-click #(login-with-oauth % :github params)}
+      [:img.logo
+       {:src "/images/icons/brand-github.svg"}]
+      (tr "auth.login-with-github-submit")])
+
+   (when cfg/oidc-client-id
+     [:a.btn-ocean.btn-large.btn-github-auth
+      {:on-click #(login-with-oauth % :oidc params)}
+      (tr "auth.login-with-oidc-submit")])])
 
 (mf/defc login-page
-  [{:keys [locale] :as props}]
-
+  [{:keys [params] :as props}]
   [:div.generic-form.login-form
    [:div.form-container
-    [:h1 (t locale "auth.login-title")]
-    [:div.subtitle (t locale "auth.login-subtitle")]
+    [:h1 (tr "auth.login-title")]
+    [:div.subtitle (tr "auth.login-subtitle")]
 
-    [:& login-form {:locale locale}]
+    [:& login-form {:params params}]
+
+    (when show-alt-login-buttons?
+      [:*
+       [:span.separator (tr "labels.or")]
+
+       [:div.buttons
+        [:& login-buttons {:params params}]]])
 
     [:div.links
      [:div.link-entry
-      [:a {:on-click #(st/emit! (rt/nav :auth-recovery-request))
-           :tab-index "5"}
-       (t locale "auth.forgot-password")]]
+      [:a {:on-click #(st/emit! (rt/nav :auth-recovery-request))}
+       (tr "auth.forgot-password")]]
 
-     [:div.link-entry
-      [:span (t locale "auth.register-label") " "]
-      [:a {:on-click #(st/emit! (rt/nav :auth-register))
-           :tab-index "6"}
-       (t locale "auth.register")]]]
+     (when cfg/registration-enabled
+       [:div.link-entry
+        [:span (tr "auth.register") " "]
+        [:a {:on-click #(st/emit! (rt/nav :auth-register {} params))}
+         (tr "auth.register-submit")]])]
 
-    (when cfg/google-client-id
-      [:a.btn-ocean.btn-large.btn-google-auth
-       {:on-click login-with-google}
-       "Login with Google"])
 
-    [:div.links.demo
-     [:div.link-entry
-      [:span (t locale "auth.create-demo-profile-label") " "]
-      [:a {:on-click #(st/emit! da/create-demo-profile)
-           :tab-index "6"}
-       (t locale "auth.create-demo-profile")]]]]])
+    (when cfg/allow-demo-users
+      [:div.links.demo
+       [:div.link-entry
+        [:span (tr "auth.create-demo-profile") " "]
+        [:a {:on-click (st/emitf (du/create-demo-profile))}
+         (tr "auth.create-demo-account")]]])]])

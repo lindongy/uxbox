@@ -2,38 +2,46 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.object
   "A collection of helpers for work with javascript objects."
-  (:refer-clojure :exclude [set! get get-in assoc!])
+  (:refer-clojure :exclude [set! get get-in merge clone contains?])
   (:require
-   [cuerdas.core :as str]
-   [goog.object :as gobj]
-   ["lodash/omit" :as omit]))
+   ["lodash/omit" :as omit]
+   [cuerdas.core :as str]))
+
+(defn new [] #js {})
 
 (defn get
   ([obj k]
    (when-not (nil? obj)
      (unchecked-get obj k)))
   ([obj k default]
-   (or (get obj k) default)))
+   (let [result (get obj k)]
+     (if (undefined? result) default result))))
+
+(defn contains?
+  [obj k]
+  (some? (unchecked-get obj k)))
+
+(defn get-keys
+  [obj]
+  (js/Object.keys ^js obj))
 
 (defn get-in
-  [obj keys]
-  (loop [key (first keys)
-         keys (rest keys)
-         res obj]
-    (if (nil? key)
-      res
-      (if (nil? res)
-        res
-        (recur (first keys)
-               (rest keys)
-               (unchecked-get res key))))))
+  ([obj keys]
+   (get-in obj keys nil))
+
+  ([obj keys default]
+   (loop [key (first keys)
+          keys (rest keys)
+          res obj]
+     (if (or (nil? key) (nil? res))
+       (or res default)
+       (recur (first keys)
+              (rest keys)
+              (unchecked-get res key))))))
 
 (defn without
   [obj keys]
@@ -43,16 +51,34 @@
                :else (throw (js/Error. "unexpected input")))]
     (omit obj keys)))
 
+(defn clone
+  [a]
+  (js/Object.assign #js {} a))
+
 (defn merge!
   ([a b]
    (js/Object.assign a b))
   ([a b & more]
    (reduce merge! (merge! a b) more)))
 
+(defn merge
+  ([a b]
+   (js/Object.assign #js {} a b))
+  ([a b & more]
+   (reduce merge! (merge a b) more)))
+
 (defn set!
   [obj key value]
   (unchecked-set obj key value)
   obj)
+
+(defn update!
+  [obj key f & args]
+  (let [found (get obj key ::not-found)]
+    (if-not (identical? ::not-found found)
+      (do (unchecked-set obj key (apply f found args))
+          obj)
+      obj)))
 
 (defn- props-key-fn
   [key]
@@ -63,3 +89,7 @@
 (defn clj->props
   [props]
   (clj->js props :keyword-fn props-key-fn))
+
+(defn ^boolean in?
+  [obj prop]
+  (js* "~{} in ~{}" prop obj))

@@ -3,8 +3,8 @@
   background-color: $color-gray-50;
   border-bottom: 1px solid  $color-gray-60;
   display: flex;
-  height: 40px;
-  padding: $x-small $medium $x-small 55px;
+  height: 48px;
+  padding: 0 $medium 0 55px;
   position: relative;
   z-index: 12;
   justify-content: space-between;
@@ -23,7 +23,7 @@
     left: 0;
     position: absolute;
     top: 0;
-    width: 40px;
+    width: 48px;
 
     a {
       height: 30px;
@@ -42,27 +42,56 @@
     }
   }
 
-  .header-icon {
-    align-items: center;
-    cursor: pointer;
-    display: flex;
-    justify-content: center;
-
-    a {
-      height: 16px;
-      width: 16px;
+  .view-options {
+    .icon {
+      align-items: center;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
 
       svg {
         fill: $color-gray-30;
-        height: 16px;
-        width: 16px;
+        height: 30px;
+        width: 28px;
       }
 
       &:hover {
-        svg {
+        > svg {
           fill: $color-primary;
         }
       }
+    }
+
+    .dropdown {
+      min-width: 260px;
+      left: 0px;
+      top: 40px;
+    }
+
+    .view-options-dropdown {
+      align-items: center;
+      cursor: pointer;
+      display: flex;
+
+      span {
+        color: $color-gray-10;
+        font-size: $fs13;
+        margin-right: $x-small;
+      }
+
+      svg {
+        fill: $color-gray-10;
+        height: 12px;
+        width: 12px;
+      }
+    }
+  }
+
+  .file-menu {
+    .dropdown {
+      min-width: 100px;
+      right: 0px;
+      top: 40px;
     }
   }
 
@@ -92,12 +121,10 @@
       }
     }
 
-    .dropdown-button {
-      svg {
-        fill: $color-white;
-        height: 10px;
-        width: 10px;
-      }
+    .show-thumbnails-button svg {
+      fill: $color-white;
+      height: 10px;
+      width: 10px;
     }
 
     .page-name {
@@ -109,10 +136,40 @@
     }
   }
 
+  .mode-zone {
+    display: flex;
+    height: 100%;
+
+    .mode-zone-button {
+      background: inherit;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+
+      height: 100%;
+      width: 48px;
+
+      svg {
+        fill: $color-gray-20;
+        width: 20px;
+        height: 20px;
+      }
+
+      &.active {
+        background: $color-gray-60;
+        svg {
+          fill: $color-primary;
+        }
+      }
+    }
+  }
+
   .options-zone {
     align-items: center;
     display: flex;
-    width: 365px;
+    width: 384px;
     justify-content: flex-end;
     position: relative;
 
@@ -134,6 +191,10 @@
         height: 20px;
       }
     }
+
+    .btn-primary {
+      flex-shrink: 0;
+    }
   }
 
   .share-link-dropdown {
@@ -142,7 +203,7 @@
     box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.25);
     display: flex;
     flex-direction: column;
-    left: -180px;
+    left: -135px;
     position: absolute;
     padding: 1rem;
     top: 45px;
@@ -182,6 +243,20 @@
       overflow: hidden;
 
       .link {
+        &:before {
+          content: '';
+          position: absolute;
+          width: 50%;
+          background: linear-gradient(45deg, transparent, #ffffff);
+          height: 100%;
+          top: 0;
+          left: 0;
+          pointer-events: none;
+          margin-left: 50%;
+        }
+        overflow: hidden;
+        white-space: nowrap;
+        position: relative;
         color: $color-gray-50;
         line-height: 1.5;
         user-select: all;
@@ -213,43 +288,9 @@
 
   }
 
-  .custom-select-dropdown {
-    position: absolute;
-    left: 0;
-    z-index: 12;
-    width: 200px;
-    max-height: 30rem;
-    min-width: 7rem;
-    overflow-y: auto;
-
-    background-color: $color-white;
-    border-radius: $br-small;
-    box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.25);
-
-    li {
-      color: $color-gray-60;
-      cursor: pointer;
-      font-size: $fs14;
-      display: flex;
-      padding: $small $small $small 25px;
-
-      &.selected {
-        background-image: url(/images/icons/tick.svg);
-        background-repeat: no-repeat;
-        background-position: 5% 48%;
-        background-size: 10px;
-        font-weight: bold;
-      }
-
-      &:hover {
-        background-color: $color-primary-lighter;
-      }
-    }
-  }
-
   .zoom-dropdown {
-    left : 150px;
-    top: 45px;
+    left: 180px;
+    top: 40px;
   }
 
   .users-zone {

@@ -2,272 +2,151 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.data.workspace.common
   (:require
-   [beicon.core :as rx]
-   [cljs.spec.alpha :as s]
-   [clojure.set :as set]
-   [potok.core :as ptk]
    [app.common.data :as d]
+   [app.common.geom.proportions :as gpr]
+   [app.common.geom.shapes :as gsh]
    [app.common.pages :as cp]
-   [app.common.pages-helpers :as cph]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
+   [app.main.data.workspace.changes :as dch]
+   [app.main.data.workspace.state-helpers :as wsh]
+   [app.main.data.workspace.undo :as dwu]
+   [app.main.streams :as ms]
    [app.main.worker :as uw]
-   [app.util.timers :as ts]
-   [app.common.geom.shapes :as geom]))
+   [app.util.logging :as log]
+   [beicon.core :as rx]
+   [cljs.spec.alpha :as s]
+   [potok.core :as ptk]))
 
-;; --- Protocols
+;; Change this to :info :debug or :trace to debug this module
+(log/set-level! :warn)
 
-(declare setup-selection-index)
-(declare update-page-indices)
-(declare reset-undo)
-(declare append-undo)
+(s/def ::shape-attrs ::cp/shape-attrs)
+(s/def ::set-of-string (s/every string? :kind set?))
+(s/def ::ordered-set-of-uuid (s/every uuid? :kind d/ordered-set?))
 
-;; --- Changes Handling
 
-(defn commit-changes
-  ([changes undo-changes]
-   (commit-changes changes undo-changes {}))
-  ([changes undo-changes {:keys [save-undo?
-                                 commit-local?]
-                          :or {save-undo? true
-                               commit-local? false}
-                          :as opts}]
-   (us/verify ::cp/changes changes)
-   (us/verify ::cp/changes undo-changes)
+;; --- Helpers
 
-   (ptk/reify ::commit-changes
-     cljs.core/IDeref
-     (-deref [_] changes)
-
-     ptk/UpdateEvent
-     (update [_ state]
-       (let [page-id (:current-page-id state)
-             state (update-in state [:workspace-pages page-id :data] cp/process-changes changes)]
-         (cond-> state
-           commit-local? (update-in [:workspace-data page-id] cp/process-changes changes))))
-
-     ptk/WatchEvent
-     (watch [_ state stream]
-       (let [page (:workspace-page state)
-             uidx (get-in state [:workspace-local :undo-index] ::not-found)]
-         (rx/concat
-          (rx/of (update-page-indices (:id page)))
-
-          (when (and save-undo? (not= uidx ::not-found))
-            (rx/of (reset-undo uidx)))
-
-          (when save-undo?
-            (let [entry {:undo-changes undo-changes
-                         :redo-changes changes}]
-              (rx/of (append-undo entry))))))))))
-
-(defn generate-operations
-  [ma mb]
-  (let [ma-keys (set (keys ma))
-        mb-keys (set (keys mb))
-        added   (set/difference mb-keys ma-keys)
-        removed (set/difference ma-keys mb-keys)
-        both    (set/intersection ma-keys mb-keys)]
-    (d/concat
-     (mapv #(array-map :type :set :attr % :val (get mb %)) added)
-     (mapv #(array-map :type :set :attr % :val nil) removed)
-     (loop [items  (seq both)
-            result []]
-       (if items
-         (let [k   (first items)
-               vma (get ma k)
-               vmb (get mb k)]
-           (if (= vma vmb)
-             (recur (next items) result)
-             (recur (next items)
-                    (conj result {:type :set
-                                  :attr k
-                                  :val vmb}))))
-         result)))))
-
-(defn generate-changes
-  [objects1 objects2]
-  (letfn [(impl-diff [res id]
-            (let [obj1 (get objects1 id)
-                  obj2 (get objects2 id)
-                  ops  (generate-operations (dissoc obj1 :shapes :frame-id)
-                                            (dissoc obj2 :shapes :frame-id))]
-              (if (empty? ops)
-                res
-                (conj res {:type :mod-obj
-                           :operations ops
-                           :id id}))))]
-    (reduce impl-diff [] (set/union (set (keys objects1))
-                                    (set (keys objects2))))))
+(defn interrupt? [e] (= e :interrupt))
 
 ;; --- Selection Index Handling
 
-(defn- setup-selection-index
-  [{:keys [file pages] :as bundle}]
+(defn initialize-indices
+  [{:keys [file] :as bundle}]
   (ptk/reify ::setup-selection-index
     ptk/WatchEvent
-    (watch [_ state stream]
-      (let [msg {:cmd :create-page-indices
+    (watch [_ _ _]
+      (let [msg {:cmd :initialize-indices
                  :file-id (:id file)
-                 :pages pages}]
+                 :data (:data file)}]
         (->> (uw/ask! msg)
              (rx/map (constantly ::index-initialized)))))))
 
-
-(defn update-page-indices
-  [page-id]
-  (ptk/reify ::update-page-indices
-    ptk/EffectEvent
-    (effect [_ state stream]
-      (let [objects (get-in state [:workspace-pages page-id :data :objects])
-            lookup  #(get objects %)]
-        (uw/ask! {:cmd :update-page-indices
-                  :page-id page-id
-                  :objects objects})))))
-
 ;; --- Common Helpers & Events
-
-(defn- calculate-frame-overlap
-  [frames shape]
-  (let [xf      (comp
-                 (filter #(geom/overlaps? % (:selrect shape)))
-                 (take 1))
-        frame   (first (into [] xf frames))]
-    (or (:id frame) uuid/zero)))
-
-(defn- calculate-shape-to-frame-relationship-changes
-  [frames shapes]
-  (loop [shape  (first shapes)
-         shapes (rest shapes)
-         rch    []
-         uch    []]
-    (if (nil? shape)
-      [rch uch]
-      (let [fid (calculate-frame-overlap frames shape)]
-        (if (not= fid (:frame-id shape))
-          (recur (first shapes)
-                 (rest shapes)
-                 (conj rch {:type :mov-objects
-                            :parent-id fid
-                            :shapes [(:id shape)]})
-                 (conj uch {:type :mov-objects
-                            :parent-id (:frame-id shape)
-                            :shapes [(:id shape)]}))
-          (recur (first shapes)
-                 (rest shapes)
-                 rch
-                 uch))))))
-
-(defn rehash-shape-frame-relationship
-  [ids]
-  (ptk/reify ::rehash-shape-frame-relationship
-    ptk/WatchEvent
-    (watch [_ state stream]
-      (let [page-id (get-in state [:workspace-page :id])
-            objects (get-in state [:workspace-data page-id :objects])
-
-            shapes (cph/select-toplevel-shapes objects)
-            frames (cph/select-frames objects)
-
-            [rch uch] (calculate-shape-to-frame-relationship-changes frames shapes)]
-        (when-not (empty? rch)
-          (rx/of (commit-changes rch uch {:commit-local? true})))))))
-
 
 (defn get-frame-at-point
   [objects point]
-  (let [frames (cph/select-frames objects)]
-    (loop [frame (first frames)
-           rest (rest frames)]
-      (d/seek #(geom/has-point? % point) frames))))
+  (let [frames (cp/select-frames objects)]
+    (d/seek #(gsh/has-point? % point) frames)))
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Undo / Redo
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn- extract-numeric-suffix
+  [basename]
+  (if-let [[_ p1 p2] (re-find #"(.*)-([0-9]+)$" basename)]
+    [p1 (+ 1 (d/parse-integer p2))]
+    [basename 1]))
 
-(s/def ::undo-changes ::cp/changes)
-(s/def ::redo-changes ::cp/changes)
-(s/def ::undo-entry
-  (s/keys :req-un [::undo-changes ::redo-changes]))
+(defn retrieve-used-names
+  [objects]
+  (into #{} (comp (map :name) (remove nil?)) (vals objects)))
 
-(def MAX-UNDO-SIZE 50)
 
-(defn- conj-undo-entry
-  [undo data]
-  (let [undo (conj undo data)]
-    (if (> (count undo) MAX-UNDO-SIZE)
-      (into [] (take MAX-UNDO-SIZE undo))
-      undo)))
+(defn generate-unique-name
+  "A unique name generator"
+  ([used basename]
+   (generate-unique-name used basename false))
+  ([used basename prefix-first?]
+   (s/assert ::set-of-string used)
+   (s/assert ::us/string basename)
+   (let [[prefix initial] (extract-numeric-suffix basename)]
+     (loop [counter initial]
+       (let [candidate (if (and (= 1 counter) prefix-first?)
+                         (str prefix)
+                         (str prefix "-" counter))]
+         (if (contains? used candidate)
+           (recur (inc counter))
+           candidate))))))
 
-(defn- materialize-undo
-  [changes index]
-  (ptk/reify ::materialize-undo
+;; --- Shape attrs (Layers Sidebar)
+
+(defn toggle-collapse
+  [id]
+  (ptk/reify ::toggle-collapse
     ptk/UpdateEvent
     (update [_ state]
-      (let [page-id (:current-page-id state)]
-        (-> state
-            (update-in [:workspace-data page-id] cp/process-changes changes)
-            (assoc-in [:workspace-local :undo-index] index))))))
+      (update-in state [:workspace-local :expanded id] not))))
 
-(defn- reset-undo
-  [index]
-  (ptk/reify ::reset-undo
+(defn expand-collapse
+  [id]
+  (ptk/reify ::expand-collapse
     ptk/UpdateEvent
     (update [_ state]
-      (-> state
-          (update :workspace-local dissoc :undo-index)
-          (update-in [:workspace-local :undo]
-                     (fn [queue]
-                       (into [] (take (inc index) queue))))))))
+      (assoc-in state [:workspace-local :expanded id] true))))
 
-(defn- append-undo
-  [entry]
-  (us/verify ::undo-entry entry)
-  (ptk/reify ::append-undo
+(def collapse-all
+  (ptk/reify ::collapse-all
     ptk/UpdateEvent
     (update [_ state]
-      (update-in state [:workspace-local :undo] (fnil conj-undo-entry []) entry))))
+      (update state :workspace-local dissoc :expanded))))
 
+
+;; These functions should've been in `src/app/main/data/workspace/undo.cljs` but doing that causes
+;; a circular dependency with `src/app/main/data/workspace/changes.cljs`
 (def undo
   (ptk/reify ::undo
     ptk/WatchEvent
-    (watch [_ state stream]
-      (let [local (:workspace-local state)
-            undo (:undo local [])
-            index (or (:undo-index local)
-                      (dec (count undo)))]
-        (when-not (or (empty? undo) (= index -1))
-          (let [changes (get-in undo [index :undo-changes])]
-            (rx/of (materialize-undo changes (dec index))
-                   (commit-changes changes [] {:save-undo? false}))))))))
+    (watch [it state _]
+      (let [edition (get-in state [:workspace-local :edition])
+            drawing (get state :workspace-drawing)]
+        ;; Editors handle their own undo's
+        (when-not (or (some? edition) (not-empty drawing))
+          (let [undo  (:workspace-undo state)
+                items (:items undo)
+                index (or (:index undo) (dec (count items)))]
+            (when-not (or (empty? items) (= index -1))
+              (let [changes (get-in items [index :undo-changes])]
+                (rx/of (dwu/materialize-undo changes (dec index))
+                       (dch/commit-changes {:redo-changes changes
+                                            :undo-changes []
+                                            :save-undo? false
+                                            :origin it}))))))))))
 
 (def redo
   (ptk/reify ::redo
     ptk/WatchEvent
-    (watch [_ state stream]
-      (let [local (:workspace-local state)
-            undo (:undo local [])
-            index (or (:undo-index local)
-                      (dec (count undo)))]
-        (when-not (or (empty? undo) (= index (dec (count undo))))
-          (let [changes (get-in undo [(inc index) :redo-changes])]
-            (rx/of (materialize-undo changes (inc index))
-                   (commit-changes changes [] {:save-undo? false}))))))))
+    (watch [it state _]
+      (let [edition (get-in state [:workspace-local :edition])
+            drawing (get state :workspace-drawing)]
+        (when-not (or (some? edition) (not-empty drawing))
+          (let [undo  (:workspace-undo state)
+                items (:items undo)
+                index (or (:index undo) (dec (count items)))]
+            (when-not (or (empty? items) (= index (dec (count items))))
+              (let [changes (get-in items [(inc index) :redo-changes])]
+                (rx/of (dwu/materialize-undo changes (inc index))
+                       (dch/commit-changes {:redo-changes changes
+                                            :undo-changes []
+                                            :origin it
+                                            :save-undo? false}))))))))))
 
-(def reinitialize-undo
-  (ptk/reify ::reset-undo
-    ptk/UpdateEvent
-    (update [_ state]
-      (update state :workspace-local dissoc :undo-index :undo))))
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Shapes
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn expand-all-parents
   [ids objects]
@@ -277,7 +156,7 @@
       (let [expand-fn (fn [expanded]
                         (merge expanded
                           (->> ids
-                               (map #(cph/get-parents % objects))
+                               (map #(cp/get-parents % objects))
                                flatten
                                (filter #(not= % uuid/zero))
                                (map (fn [id] {id true}))
@@ -289,87 +168,370 @@
 ;; NOTE: This is a generic implementation for update multiple shapes
 ;; in one single commit/undo entry.
 
-(s/def ::coll-of-uuid
-  (s/every ::us/uuid))
 
-(defn update-shapes
-  ([ids f] (update-shapes ids f nil))
-  ([ids f {:keys [reg-objects?] :or {reg-objects? false}}]
-   (us/assert ::coll-of-uuid ids)
-   (us/assert fn? f)
-   (ptk/reify ::update-shapes
-     ptk/WatchEvent
-     (watch [_ state stream]
+(defn select-shapes
+  [ids]
+  (us/verify ::ordered-set-of-uuid ids)
+  (ptk/reify ::select-shapes
+    ptk/UpdateEvent
+    (update [_ state]
+      (assoc-in state [:workspace-local :selected] ids))
+
+    ptk/WatchEvent
+    (watch [_ state _]
       (let [page-id (:current-page-id state)
-            objects (get-in state [:workspace-data page-id :objects])]
-        (loop [ids (seq ids)
-               rch []
-               uch []]
-          (if (nil? ids)
-            (rx/of (commit-changes
-                    (cond-> rch reg-objects? (conj {:type :reg-objects :shapes (vec ids)}))
-                    (cond-> uch reg-objects? (conj {:type :reg-objects :shapes (vec ids)}))
-                    {:commit-local? true}))
+            objects (wsh/lookup-page-objects state page-id)]
+        (rx/of (expand-all-parents ids objects))))))
 
-            (let [id   (first ids)
-                  obj1 (get objects id)
-                  obj2 (f obj1)
-                  rchg {:type :mod-obj
-                        :operations (generate-operations obj1 obj2)
-                        :id id}
-                  uchg {:type :mod-obj
-                        :operations (generate-operations obj2 obj1)
-                        :id id}]
-              (recur (next ids)
-                     (conj rch rchg)
-                     (conj uch uchg))))))))))
+(declare clear-edition-mode)
 
+(defn start-edition-mode
+  [id]
+  (us/assert ::us/uuid id)
+  (ptk/reify ::start-edition-mode
+    ptk/UpdateEvent
+    (update [_ state]
+      (let [objects (wsh/lookup-page-objects state)]
+        ;; Can only edit objects that exist
+        (if (contains? objects id)
+          (-> state
+              (assoc-in [:workspace-local :selected] #{id})
+              (assoc-in [:workspace-local :edition] id))
+          state)))
 
-(defn update-shapes-recursive
-  [ids f]
-  (us/assert ::coll-of-uuid ids)
-  (us/assert fn? f)
-  (letfn [(impl-get-children [objects id]
-            (cons id (cph/get-children id objects)))
+    ptk/WatchEvent
+    (watch [_ _ stream]
+      (->> stream
+           (rx/filter interrupt?)
+           (rx/take 1)
+           (rx/map (constantly clear-edition-mode))))))
 
-          (impl-gen-changes [objects ids]
-            (loop [sids (seq ids)
-                   cids (seq (impl-get-children objects (first sids)))
-                   rchanges []
-                   uchanges []]
-              (cond
-                (nil? sids)
-                [rchanges uchanges]
+;; If these event change modules review /src/app/main/data/workspace/path/undo.cljs
+(def clear-edition-mode
+  (ptk/reify ::clear-edition-mode
+    ptk/UpdateEvent
+    (update [_ state]
+      (let [id (get-in state [:workspace-local :edition])]
+        (-> state
+            (update :workspace-local dissoc :edition)
+            (cond-> (some? id) (update-in [:workspace-local :edit-path] dissoc id)))))))
 
-                (nil? cids)
-                (recur (next sids)
-                       (seq (impl-get-children objects (first (next sids))))
-                       rchanges
-                       uchanges)
+(defn get-shape-layer-position
+  [objects selected attrs]
 
-                :else
-                (let [id   (first cids)
-                      obj1 (get objects id)
-                      obj2 (f obj1)
-                      rops (generate-operations obj1 obj2)
-                      uops (generate-operations obj2 obj1)
-                      rchg {:type :mod-obj
-                            :operations rops
-                            :id id}
-                      uchg {:type :mod-obj
-                            :operations uops
-                            :id id}]
-                  (recur sids
-                         (next cids)
-                         (conj rchanges rchg)
-                         (conj uchanges uchg))))))]
-    (ptk/reify ::update-shapes-recursive
-      ptk/WatchEvent
-      (watch [_ state stream]
-        (let [page-id  (get-in state [:workspace-page :id])
-              objects  (get-in state [:workspace-data page-id :objects])
-              [rchanges uchanges] (impl-gen-changes objects (seq ids))]
-        (rx/of (commit-changes rchanges uchanges {:commit-local? true})))))))
+  (if (= :frame (:type attrs))
+    ;; Frames are alwasy positioned on the root frame
+    [uuid/zero uuid/zero nil]
 
+    ;; Calculate the frame over which we're drawing
+    (let [position @ms/mouse-position
+          frame-id (:frame-id attrs (cp/frame-id-by-position objects position))
+          shape (when-not (empty? selected)
+                  (cp/get-base-shape objects selected))]
+
+      ;; When no shapes has been selected or we're over a different frame
+      ;; we add it as the latest shape of that frame
+      (if (or (not shape) (not= (:frame-id shape) frame-id))
+        [frame-id frame-id nil]
+
+        ;; Otherwise, we add it to next to the selected shape
+        (let [index (cp/position-on-parent (:id shape) objects)
+              {:keys [frame-id parent-id]} shape]
+          [frame-id parent-id (inc index)])))))
+
+(defn add-shape-changes
+  ([page-id objects selected attrs]
+   (add-shape-changes page-id objects selected attrs true))
+  ([page-id objects selected attrs reg-object?]
+   (let [id    (:id attrs)
+         shape (gpr/setup-proportions attrs)
+
+         default-attrs (if (= :frame (:type shape))
+                         cp/default-frame-attrs
+                         cp/default-shape-attrs)
+
+         shape    (merge default-attrs shape)
+
+         not-frame? #(not (= :frame (get-in objects [% :type])))
+         selected (into #{} (filter not-frame?) selected)
+
+         [frame-id parent-id index] (get-shape-layer-position objects selected attrs)
+
+         redo-changes  (cond-> [{:type :add-obj
+                                 :id id
+                                 :page-id page-id
+                                 :frame-id frame-id
+                                 :parent-id parent-id
+                                 :index index
+                                 :obj shape}]
+                         reg-object?
+                         (conj {:type :reg-objects
+                                :page-id page-id
+                                :shapes [id]}))
+         undo-changes  [{:type :del-obj
+                         :page-id page-id
+                         :id id}]]
+
+     [redo-changes undo-changes])))
+
+(defn add-shape
+  [attrs]
+  (us/verify ::shape-attrs attrs)
+  (ptk/reify ::add-shape
+    ptk/WatchEvent
+    (watch [it state _]
+      (let [page-id  (:current-page-id state)
+            objects  (wsh/lookup-page-objects state page-id)
+
+            id (or (:id attrs) (uuid/next))
+            name (-> objects
+                     (retrieve-used-names)
+                     (generate-unique-name (:name attrs)))
+
+            selected (wsh/lookup-selected state)
+
+            [rchanges uchanges] (add-shape-changes
+                                 page-id
+                                 objects
+                                 selected
+                                 (-> attrs
+                                     (assoc :id id )
+                                     (assoc :name name)))]
+
+        (rx/concat
+         (rx/of (dch/commit-changes {:redo-changes rchanges
+                                     :undo-changes uchanges
+                                     :origin it})
+                (select-shapes (d/ordered-set id)))
+         (when (= :text (:type attrs))
+           (->> (rx/of (start-edition-mode id))
+                (rx/observe-on :async))))))))
+
+(defn move-shapes-into-frame [frame-id shapes]
+  (ptk/reify ::move-shapes-into-frame
+    ptk/WatchEvent
+    (watch [it state _]
+      (let [page-id  (:current-page-id state)
+            objects (wsh/lookup-page-objects state page-id)
+            to-move-shapes (->> (cp/select-toplevel-shapes objects {:include-frames? false})
+                                (filterv #(= (:frame-id %) uuid/zero))
+                                (mapv :id)
+                                (d/enumerate)
+                                (filterv (comp shapes second)))
+
+            rchanges [{:type :mov-objects
+                       :parent-id frame-id
+                       :frame-id frame-id
+                       :page-id page-id
+                       :index 0
+                       :shapes (mapv second to-move-shapes)}]
+
+            uchanges (->> to-move-shapes
+                          (mapv (fn [[index shape-id]]
+                                  {:type :mov-objects
+                                   :parent-id uuid/zero
+                                   :frame-id uuid/zero
+                                   :page-id page-id
+                                   :index index
+                                   :shapes [shape-id]})))]
+        (rx/of (dch/commit-changes {:redo-changes rchanges
+                                    :undo-changes uchanges
+                                    :origin it}))))))
+
+(s/def ::set-of-uuid
+  (s/every ::us/uuid :kind set?))
+
+(defn delete-shapes
+  [ids]
+  (us/assert ::set-of-uuid ids)
+  (ptk/reify ::delete-shapes
+    ptk/WatchEvent
+    (watch [it state _]
+      (let [page-id (:current-page-id state)
+            objects (wsh/lookup-page-objects state page-id)
+
+            groups-to-unmask
+            (reduce (fn [group-ids id]
+                      ;; When the shape to delete is the mask of a masked group,
+                      ;; the mask condition must be removed, and it must be
+                      ;; converted to a normal group.
+                      (let [obj (get objects id)
+                            parent (get objects (:parent-id obj))]
+                        (if (and (:masked-group? parent)
+                                 (= id (first (:shapes parent))))
+                          (conj group-ids (:id parent))
+                          group-ids)))
+                    #{}
+                    ids)
+
+            interacting-shapes
+            (filter (fn [shape]
+                      (let [interactions (:interactions shape)]
+                        (some ids (map :destination interactions))))
+                    (vals objects))
+
+            empty-parents-xform
+            (comp
+             (map (fn [id] (get objects id)))
+             (map (fn [{:keys [shapes type] :as obj}]
+                    (when (and (= :group type)
+                               (zero? (count (remove #(contains? ids %) shapes))))
+                      obj)))
+             (take-while some?)
+             (map :id))
+
+            all-parents
+            (reduce (fn [res id]
+                      (into res (cp/get-parents id objects)))
+                    (d/ordered-set)
+                    ids)
+
+            all-children
+            (reduce (fn [res id]
+                      (into res (cp/get-children id objects)))
+                    (d/ordered-set)
+                    ids)
+
+            empty-parents
+            (into (d/ordered-set) empty-parents-xform all-parents)
+
+            mk-del-obj-xf
+            (map (fn [id]
+                   {:type :del-obj
+                    :page-id page-id
+                    :id id}))
+
+            mk-add-obj-xf
+            (map (fn [id]
+                   (let [item (get objects id)]
+                     {:type :add-obj
+                      :id (:id item)
+                      :page-id page-id
+                      :index (cp/position-on-parent id objects)
+                      :frame-id (:frame-id item)
+                      :parent-id (:parent-id item)
+                      :obj item})))
+
+            mk-mod-touched-xf
+            (map (fn [id]
+                   (let [parent (get objects id)]
+                     {:type :mod-obj
+                      :page-id page-id
+                      :id (:id parent)
+                      :operations [{:type :set-touched
+                                    :touched (:touched parent)}]})))
+
+            mk-mod-int-del-xf
+            (map (fn [obj]
+                   {:type :mod-obj
+                    :page-id page-id
+                    :id (:id obj)
+                    :operations [{:type :set
+                                  :attr :interactions
+                                  :val (vec (remove (fn [interaction]
+                                                      (contains? ids (:destination interaction)))
+                                                    (:interactions obj)))}]}))
+            mk-mod-int-add-xf
+            (map (fn [obj]
+                   {:type :mod-obj
+                    :page-id page-id
+                    :id (:id obj)
+                    :operations [{:type :set
+                                  :attr :interactions
+                                  :val (:interactions obj)}]}))
+
+            mk-mod-unmask-xf
+            (map (fn [id]
+                   {:type :mod-obj
+                    :page-id page-id
+                    :id id
+                    :operations [{:type :set
+                                  :attr :masked-group?
+                                  :val false}]}))
+
+            mk-mod-mask-xf
+            (map (fn [id]
+                   {:type :mod-obj
+                    :page-id page-id
+                    :id id
+                    :operations [{:type :set
+                                  :attr :masked-group?
+                                  :val true}]}))
+
+            rchanges
+            (-> []
+                (into mk-del-obj-xf all-children)
+                (into mk-del-obj-xf ids)
+                (into mk-del-obj-xf empty-parents)
+                (conj {:type :reg-objects
+                       :page-id page-id
+                       :shapes (vec all-parents)})
+                (into mk-mod-unmask-xf groups-to-unmask)
+                (into mk-mod-int-del-xf interacting-shapes))
+
+            uchanges
+            (-> []
+                (into mk-add-obj-xf (reverse empty-parents))
+                (into mk-add-obj-xf (reverse ids))
+                (into mk-add-obj-xf (reverse all-children))
+                (conj {:type :reg-objects
+                       :page-id page-id
+                       :shapes (vec all-parents)})
+                (into mk-mod-touched-xf (reverse all-parents))
+                (into mk-mod-mask-xf groups-to-unmask)
+                (into mk-mod-int-add-xf interacting-shapes))
+            ]
+
+        ;; (println "================ rchanges")
+        ;; (cljs.pprint/pprint rchanges)
+        ;; (println "================ uchanges")
+        ;; (cljs.pprint/pprint uchanges)
+        (rx/of (dch/commit-changes {:redo-changes rchanges
+                                    :undo-changes uchanges
+                                    :origin it}))))))
+
+;; --- Add shape to Workspace
+
+(defn- viewport-center
+  [state]
+  (let [{:keys [x y width height]} (get-in state [:workspace-local :vbox])]
+    [(+ x (/ width 2)) (+ y (/ height 2))]))
+
+(defn create-and-add-shape
+  [type frame-x frame-y data]
+  (ptk/reify ::create-and-add-shape
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [{:keys [width height]} data
+
+            [vbc-x vbc-y] (viewport-center state)
+            x (:x data (- vbc-x (/ width 2)))
+            y (:y data (- vbc-y (/ height 2)))
+            page-id (:current-page-id state)
+            frame-id (-> (wsh/lookup-page-objects state page-id)
+                         (cp/frame-id-by-position {:x frame-x :y frame-y}))
+            shape (-> (cp/make-minimal-shape type)
+                      (merge data)
+                      (merge {:x x :y y})
+                      (assoc :frame-id frame-id)
+                      (gsh/setup-selrect))]
+        (rx/of (add-shape shape))))))
+
+(defn image-uploaded
+  [image {:keys [x y]}]
+  (ptk/reify ::image-uploaded
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (let [{:keys [name width height id mtype]} image
+            shape {:name name
+                   :width width
+                   :height height
+                   :x (- x (/ width 2))
+                   :y (- y (/ height 2))
+                   :metadata {:width width
+                              :height height
+                              :mtype mtype
+                              :id id}}]
+        (rx/of (create-and-add-shape :image x y shape))))))
 
 

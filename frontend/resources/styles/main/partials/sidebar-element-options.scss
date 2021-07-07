@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2015-2016 Andrey Antukh <niwi@niwi.nz>
-// Copyright (c) 2015-2016 Juan de la Cruz <delacruzgarciajuan@gmail.com>
+// Copyright (c) UXBOX Labs SL
 
 .element-options {
   display: flex;
@@ -61,16 +60,22 @@
   .element-set {
     border-bottom: 1px solid $color-gray-60;
     color: $color-gray-20;
-    margin: 0 $x-small;
+    padding: $small $x-small;
 
     .element-set-title {
-      color: $color-gray-10;
+      color: $color-gray-20;
       display: flex;
       font-size: $fs13;
-      padding: $small $x-small;
+      padding: $x-small;
       width: 100%;
+      align-items: center;
     }
 
+    &:hover {
+      .element-set-title {
+        color: $color-gray-10;
+      }
+    }
   }
 
   .element-list {
@@ -185,9 +190,10 @@
     background-color: $color-gray-50;
     border: 1px solid transparent;
     border-bottom-color: $color-gray-40;
-    color: $color-gray-10;
+    color: $color-white;
     font-size: $fs12;
     margin: $x-small;
+    min-width: 0;
     padding: $x-small;
     width: 100%;
 
@@ -217,19 +223,19 @@
   }
 
   .element-set-subtitle {
-    color: $color-gray-10;
+    color: $color-gray-20;
     font-size: $fs11;
-    width: 12rem;
+    width: 64px;
   }
 
   .lock-size {
     cursor: pointer;
-    width: 20%;
+    margin: auto;
 
     svg {
       fill: $color-gray-20;
-      height: 15px;
-      width: 15px;
+      height: 14px;
+      width: 14px;
 
       &:hover {
         fill: $color-primary;
@@ -262,8 +268,9 @@
   }
 
   .custom-select {
-    cursor: pointer;
     border: 1px solid $color-gray-40;
+    border-radius: $br-small;
+    cursor: pointer;
     padding: $x-small $big $x-small $x-small;
     position: relative;
 
@@ -288,17 +295,18 @@
     }
 
   }
-  .custom-select-dropdown {
-    position: absolute;
-    left: 0;
-    z-index: 12;
-    max-height: 30rem;
-    min-width: 7rem;
-    overflow-y: auto;
 
+  .custom-select-dropdown {
     background-color: $color-white;
     border-radius: $br-small;
     box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.25);
+    left: 0;
+    max-height: 30rem;
+    min-width: 7rem;
+    position: absolute;
+    overflow-y: auto;
+    top: 30px;
+    z-index: 12;
 
     .presets {
       width: 200px;
@@ -373,7 +381,7 @@
     width: 60%;
 
     svg {
-      fill: $color-gray-40;
+      fill: $color-gray-10;
       height: 10px;
       width: 10px;
     }
@@ -383,6 +391,11 @@
       position: absolute;
       top: -1px;
       width: 60%;
+    }
+
+    input.input-text {
+        border: none;
+        background: none;
     }
 
     .input-select {
@@ -404,12 +417,16 @@
 
     .dropdown-button {
       position: absolute;
-      top: 4px;
       right: 0;
+      padding-right: 4px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+
     }
 
     &.input-option {
-      height: 2rem;
+      height: 26px;
       border-bottom: 1px solid #64666A;
       width: 100%;
       margin-left: 0.25rem;
@@ -420,8 +437,13 @@
         width: calc(100% - 12px);
         height: 100%;
         top: auto;
-        color: #b1b2b5;
+        color: $color-white;
       }
+    }
+
+    .custom-select-dropdown {
+      top: unset;
+      margin-bottom: 0;
     }
 
     &:hover {
@@ -431,6 +453,15 @@
 }
 
 .element-set-content .grid-option-main  {
+  .editable-select {
+    height: 2rem;
+  }
+  .editable-select svg {
+    fill: $color-gray-40;
+  }
+  .dropdown-button {
+    top: 4px;
+  }
   .editable-select.input-option .input-text {
     padding: 0;
     padding-top: 0.18rem;
@@ -443,9 +474,41 @@
 
   .input-text {
     padding-left: 0;
-    color: #b1b2b5;
+    color: $color-white;
     background-color: transparent;
     height: 30px;
+  }
+}
+
+.element-set-content .component-row {
+  display: flex;
+  align-items: center;
+  font-size: $fs12;
+  color: $color-gray-10;
+
+  svg {
+    fill: $color-gray-20;
+    height: 16px;
+    width: 16px;
+    margin-right: $small;
+  }
+
+  .row-actions {
+    margin-left: auto;
+    cursor: pointer;
+
+    svg {
+      fill: $color-gray-20;
+      height: 12px;
+      margin-right: $x-small;
+      width: 12px;
+    }
+
+    .context-menu-items {
+      right: 0.5rem;
+      left: unset;
+      top: 0;
+    }
   }
 }
 
@@ -453,46 +516,17 @@
   margin-bottom: 0;
 }
 
-.color-th {
-  background-color: $color-gray-10;
-  border: 1px solid $color-gray-10;
-  border-radius: $br-small;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: $color-gray-10;
-  flex-shrink: 0;
-  height: 20px;
-  margin: 5px 4px 0 0;
-  width: 20px;
-
-  &.palette-th {
-    align-items: center;
-    border: 1px solid $color-gray-30;
-    display: flex;
-    justify-content: center;
-
-    svg {
-      fill: $color-gray-30;
-      height: 16px;
-      width: 16px;
-    }
-
-    &:hover {
-      border-color: $color-primary;
-      svg {
-        fill: $color-primary;
-      }
-
-    }
-
-  }
-}
-
 .presets {
   .custom-select-dropdown {
-    width: 200px;
+    width: 237px;
+
+    li {
+      font-size: $fs12;
+
+      span {
+        font-size: $fs11;
+      }
+    }
   }
 }
 
@@ -501,16 +535,15 @@
 }
 
 .align-icons {
-  border: 1px solid $color-gray-60;
-  border-radius: $br-small;
   cursor: pointer;
   display: flex;
   flex: 1;
-  justify-content: space-between;
-  margin-left: $small;
-  padding: $small;
+  justify-content: flex-end;
+  margin: $small 0 $small $small;
+  padding: 0 $x-small;
 
   &:first-child {
+    justify-content: flex-start;
     margin-left: 0;
   }
 
@@ -525,8 +558,8 @@
 
     svg {
       fill: $color-gray-30;
-      height: 15px;
-      width: 15px;
+      height: 14px;
+      width: 14px;
     }
 
     &:hover,
@@ -578,6 +611,35 @@
 
 }
 
+.radius-options {
+  align-items: center;
+  border: 1px solid $color-gray-60;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+  padding: 8px;
+  width: 64px;
+
+  .radius-icon {
+    display: flex;
+    align-items: center;
+
+    svg {
+      cursor: pointer;
+      height: 16px;
+      fill: $color-gray-30;
+      width: 16px;
+    }
+
+    &:hover,
+    &.selected {
+      svg {
+        fill: $color-primary;
+      }
+    }
+  }
+}
+
 .orientation-icon {
   margin-left: $small;
   display: flex;
@@ -586,14 +648,13 @@
   svg {
     cursor: pointer;
     height: 20px;
-    stroke: $color-gray-40;
-    stroke-width: 30px;
+    fill: $color-gray-40;
     width: 20px;
   }
 
   &:hover {
     svg {
-      stroke: $color-gray-10;
+      fill: $color-gray-10;
     }
   }
 }
@@ -635,12 +696,12 @@
     display: flex;
     height: 18px;
     position: relative;
-    width: 18px;
+    width: 14px;
 
     svg {
       fill: $color-gray-30;
-      height: 16px;
-      width: 16px;
+      height: 14px;
+      width: 14px;
     }
   }
 }
@@ -664,11 +725,24 @@
 .element-set-content .input-row {
   & .element-set-subtitle {
     width: 5.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
 .grid-option {
   margin-bottom: 0.5rem;
+  .advanced-options {
+    .row-flex {
+      justify-content: flex-end;
+    }
+    .custom-button {
+      left: 0;
+      position: absolute;
+      top: 12px;
+    }
+  }
 }
 
 .element-set-content .custom-select.input-option {
@@ -688,6 +762,7 @@
 
   &:hover {
     background: $color-gray-60;
+
 
     .custom-select,
     .editable-select,
@@ -721,11 +796,10 @@
     margin-left: 0.5rem;
 
     & .custom-select-dropdown {
-      width: 56px;
-      min-width: 56px;
+      width: 5rem;
+      min-width: 5rem;
       max-height: 10rem;
     }
-
   }
 }
 
@@ -744,18 +818,25 @@
   left: 0;
   position: absolute;
   top: 0;
-  width: 100%;
+  width: calc(100%);
   opacity: 0.4;
+  z-index: 10;
+  display: flex;
 }
 
-.element-set-content .advanced-options {
-  background-color: #303236;
+.advanced-options-wrapper {
+  width: 100%;
+}
+
+.advanced-options {
+  border: 1px solid $color-gray-60;
+  background-color: $color-gray-50;
   border-radius: 4px;
-  left: -8px;
-  padding: 0.5rem;
+  padding: 8px;
   position: relative;
   top: 2px;
-  width: calc(100% + 16px);
+  width: 100%;
+  z-index: 20;
 }
 
 .btn-options {
@@ -794,9 +875,14 @@
   &:hover {
     background: #1F1F1F;
   }
+
+  &.selected {
+    border: 1px solid $color-primary;
+  }
 }
 
-.exports-options {
+.exports-options,
+.shadow-options{
   .element-set-options-group {
     justify-content: space-between;
     .delete-icon {
@@ -821,4 +907,534 @@
   .download-button {
     margin-top: 10px;
   }
+
+  .input-element {
+    width: 100%;
+    flex-shrink: initial;
+  }
+
+  .row-grid-2 {
+    grid-column-gap: 1em;
+  }
+
+  .color-info {
+    input {
+      margin-right: 1em;
+      width: 74px;
+    }
+  }
+}
+
+.shadow-options .color-row-wrap {
+    margin-left: 6px;
+    margin-top: 0.5rem;
+}
+
+.element-set-actions-button {
+    display: flex;
+    min-width: 30px;
+    min-height: 30px;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    svg {
+        width: 12px;
+        height: 12px;
+        fill: $color-gray-20;
+    }
+
+    &:hover svg {
+        fill: $color-primary;
+    }
+    &.actions-inside {
+      position: absolute;
+      right: 0;
+    }
+}
+
+.element-set-label {
+  font-size: $fs11;
+  padding: 0.5rem;
+  color: $color-gray-10;
+}
+
+.element-set-actions {
+    display: flex;
+    visibility: hidden;
+}
+
+.row-flex-removable:hover .element-set-actions,
+.element-set-options-group:hover .element-set-actions {
+  visibility: visible;
+}
+
+.layer-actions {
+  visibility: visible;
+}
+
+.typography-entry {
+    margin: 0.5rem 0.3rem;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+
+    .typography-selection-wrapper {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        flex: 1;
+        height: 100%;
+
+        &.is-selectable {
+            cursor: pointer;
+        }
+    }
+
+    .typography-sample {
+        font-size: 17px;
+        color: $color-white;
+        margin: 0 0.5rem;
+
+        font-family: sourcesanspro;
+        font-style: normal;
+        font-weight: normal;
+    }
+
+    .typography-name {
+        flex-grow: 1;
+        font-size: 11px;
+        margin-top: 4px;
+        white-space: nowrap;
+    }
+
+    .element-set-actions-button svg {
+        width: 10px;
+        height: 10px;
+    }
+}
+
+.spacing-options {
+  display: flex;
+  width: 100%;
+}
+
+.asset-section {
+    .typography-entry {
+        margin: 0.25rem 0;
+    }
+
+    .element-set-content .font-option,
+    .element-set-content .size-option {
+        margin: 0.5rem 0;
+    }
+    .element-set-content .variant-option {
+        margin-left: 0.5rem;
+    }
+}
+
+.row-flex input.adv-typography-name {
+    font-size: 14px;
+    color: $color-gray-10;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    background-color: #303236;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+}
+
+.size-option .custom-select-dropdown {
+    cursor: pointer;
+    max-height: 16rem;
+    min-width: 6rem;
+    left: initial;
+    top: 0;
+}
+
+.typography-read-only-data {
+    font-size: 12px;
+    color: $color-white;
+
+    .typography-name {
+        font-size: 14px;
+    }
+
+    .row-flex {
+        padding: 0.5rem 0;
+    }
+
+    .label {
+        color: $color-gray-30;
+
+        &::after {
+            content: ':';
+            margin-right: 0.25rem;
+        }
+    }
+
+    .go-to-lib-button {
+        transition: border 0.3s, color 0.3s;
+        text-align: center;
+        background: $color-gray-50;
+        padding: 0.5rem;
+        border-radius: 2px;
+        cursor: pointer;
+        font-size: 14px;
+        margin-top: 1rem;
+
+        &:hover {
+            background: $color-primary;
+            color: $color-black;
+        }
+    }
+}
+
+.multiple-typography {
+  margin: 0.5rem;
+  padding: 0.5rem;
+  border: 1px dashed $color-gray-30;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+
+  .multiple-typography-text,
+  .multiple-typography-button {
+    font-size: $fs13;
+    display: flex;
+    align-items: center;
+  }
+
+  .multiple-typography-button {
+    cursor: pointer;
+    svg {
+      transition: fill 0.3s;
+      width: 16px;
+      height: 16px;
+      fill: $color-gray-10;
+    }
+
+    &:hover svg {
+      fill: $color-primary;
+    }
+  }
+
+  svg {
+  }
+
+  .multiple-typography-button:hover svg {
+  }
+}
+
+.font-selector {
+  background: $color-black;
+  height: 100%;
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: calc(100%);
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  .font-selector-dropdown {
+    background: #303236;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    height: 100%;
+  }
+
+  header {
+    padding: 15px 17px;
+    display: flex;
+    align-items: center;
+    position: relative;
+
+    .backend-filters {
+      padding: $small $medium;
+      // width: 220px;
+      top: 40px;
+      right: 20px;
+    }
+    .backend-filter {
+      display: flex;
+      align-items: center;
+      padding: $small 0;
+      cursor: pointer;
+
+      .checkbox-icon {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: $medium;
+        height: $medium;
+        border: 1px solid $color-gray-30;
+        border-radius: $br-small;
+
+        svg {
+          width: 8px;
+          display: none;
+          height: 8px;
+          fill: $color-black;
+        }
+      }
+
+      .backend-name {
+        margin-left: $small;
+        color: $color-gray-50;
+      }
+
+      &.selected {
+        .checkbox-icon {
+          svg {
+            display: inherit;
+          }
+        }
+      }
+
+    }
+
+    input {
+      display: flex;
+      flex-grow: 1;
+      padding: 4px;
+      font-size: $fs12;
+      background: $color-gray-50;
+      border-radius: $br-small;
+      color: $color-gray-20;
+      border: 1px solid $color-gray-30;
+      margin: 0px;
+    }
+
+    .options {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 24px;
+      height: 24px;
+      margin-left: $small;
+
+      svg {
+        width: 16px;
+        height: 16px;
+        fill: $color-gray-20
+      }
+
+      &.active {
+        svg {
+          fill: $color-primary;
+        }
+      }
+    }
+  }
+
+  .fonts-list {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+
+    position: relative;
+    -webkit-box-flex: 1;
+    flex: 1 1 auto;
+  }
+
+  hr {
+    margin-bottom: 0px;
+    margin-top: 0px;
+  }
+
+  .font-item {
+    padding-left: $big;
+    height: $x-big;
+    max-height: $x-big;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    color: $color-gray-10;
+
+    &.selected {
+      background-color: $color-black;
+      color: $color-primary;
+
+      .icon svg {fill: $color-primary;}
+    }
+
+    &:hover {
+      background-color: $color-primary;
+      color: $color-black;
+    }
+
+    .icon {
+      display: flex;
+      // justify-content: center;
+      align-items: center;
+      // border: 1px solid red;
+      width: $big
+    }
+
+    .label {
+      font-size: 12px;
+    }
+
+    svg {
+      fill: $color-gray-10;
+      width: 10px;
+      height: 10px;
+    }
+  }
+}
+
+.row-flex.align-top {
+  align-items: flex-start;
+}
+
+.constraints-widget {
+  min-width: 72px;
+  min-height: 72px;
+  position: relative;
+  background-color: $color-gray-60;
+  flex-grow: 0;
+
+  .constraints-box {
+    width: 28px;
+    height: 28px;
+    position: absolute;
+    top: 22px;
+    left: 22px;
+    border: 2px solid $color-gray-50;
+  }
+
+  .constraint-button {
+    position: absolute;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    &::after {
+      content: ' ';
+      background-color: $color-gray-20;
+    }
+
+    &.active,
+    &:hover {
+      &::after {
+        background-color: $color-primary;
+      }
+    }
+
+    &.top,
+    &.bottom {
+      width: 28px;
+      height: 22px;
+      left: calc(50% - 14px);
+
+      &::after {
+        width: 3px;
+        height: 15px;
+      }
+    }
+
+    &.top {
+      top: 0;
+    }
+
+    &.bottom {
+      bottom: 0;
+    }
+
+    &.left,
+    &.right {
+      width: 22px;
+      height: 28px;
+      top: calc(50% - 14px);
+
+      &::after {
+        width: 15px;
+        height: 3px;
+      }
+    }
+
+    &.left {
+      left: 0;
+    }
+
+    &.right {
+      right: 0;
+    }
+
+    &.centerv {
+      width: 28px;
+      height: 28px;
+      left: calc(50% - 14px);
+      top: calc(50% - 14px);
+
+      &::after {
+        width: 3px;
+        height: 15px;
+      }
+    }
+
+    &.centerh {
+      width: 28px;
+      height: 15px;
+      left: calc(50% - 14px);
+      top: calc(50% - 7px);
+
+      &::after {
+        width: 15px;
+        height: 3px;
+      }
+    }
+  }
+}
+
+.constraints-form {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+
+  .input-select {
+    font-size: $fs11;
+    margin: 0 $x-small;
+  }
+
+  svg {
+    width: 15px;
+    height: 15px;
+    margin-left: $medium;
+    fill: $color-gray-20;
+  }
+
+  .left-right svg {
+    transform: rotate(45deg);
+  }
+
+  .top-bottom svg {
+    transform: rotate(-45deg);
+  }
+
+  .fix-when {
+    font-size: $fs11;
+    cursor: pointer;
+
+    span {
+      margin-left: $small;
+    }
+
+    &:hover,
+    &.active {
+      color: $color-primary;
+
+      svg {
+        fill: $color-primary;
+      }
+    }
+  }
+
 }

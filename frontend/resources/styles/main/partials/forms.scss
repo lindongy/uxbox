@@ -14,9 +14,11 @@ textarea {
   }
 }
 
+.form-container,
 .generic-form {
   display: flex;
   justify-content: center;
+  flex-direction: column;
 
   .forms-container {
     display: flex;
@@ -29,6 +31,18 @@ textarea {
     display: flex;
     flex-direction: column;
     // flex-basis: 368px;
+  }
+
+  .fields-row {
+    margin-bottom: 20px;
+    flex-direction: column;
+
+    .options {
+      display: flex;
+      justify-content: flex-end;
+      font-size: $fs14;
+      margin-top: 13px;
+    }
   }
 
   .field {
@@ -47,8 +61,37 @@ textarea {
     margin-bottom: 20px;
   }
 
+  .notification-icon {
+    justify-content: center;
+    display: flex;
+    margin-bottom: 3rem;
+
+    svg {
+      fill: $color-gray-60;
+      height: 40%;
+      width: 40%;
+    }
+  }
+
+  .notification-text {
+    font-size: $fs18;
+    color: $color-gray-60;
+    margin-bottom: 20px;
+  }
+
+  .notification-text-email {
+    background: $color-gray-10;
+    border-radius: $br-small;
+    color: $color-gray-60;
+    font-size: $fs18;
+    font-weight: 500;
+    margin: 1.5rem 0 2.5rem 0;
+    padding: 1rem;
+    text-align: center;
+  }
+
   h2 {
-    font-size: $fs14;
+    font-size: $fs24;
     color: $color-gray-60;
     // height: 40px;
     display: flex;
@@ -59,27 +102,12 @@ textarea {
     text-decoration: underline;
   }
 
-  .links {
-    display: flex;
-    font-size: $fs11;
-    justify-content: space-between;
-    margin-bottom: $medium;
-
-    &.demo {
-      justify-content: center;
-      margin-top: $big;
-    }
+  p {
+    color: $color-gray-60;
   }
 
-  .link-entry {
-    font-size: $fs12;
-    color: $color-gray-40;
-    margin-bottom: 10px;
-  }
-
-  .link-entry a {
-    font-size: $fs12;
-    color: $color-primary-dark;
+  hr {
+    border-color: $color-gray-20;
   }
 }
 
@@ -88,16 +116,24 @@ textarea {
   flex-direction: column;
   position: relative;
 
-  input {
+  input,
+  textarea {
     background-color: $color-white;
     border-radius: 2px;
     border: 1px solid $color-gray-20;
     color: $color-gray-60;
-    font-size: $fs12;
+    font-size: $fs14;
     height: 40px;
     margin: 0;
     padding: 15px 15px 0 15px;
     width: 100%;
+  }
+
+  textarea {
+    height: auto;
+    font-size: $fs14;
+    font-family: "worksans", sans-serif;
+    padding-top: 20px;
   }
 
   // Makes the background for autocomplete white
@@ -109,7 +145,7 @@ textarea {
   }
 
   label {
-    font-size: $fs10;
+    font-size: $fs12;
     color: $color-gray-30;
     position: absolute;
     left: 15px;
@@ -181,13 +217,13 @@ textarea {
 
   .hint {
     padding: 4px;
-    font-size: $fs10;
+    font-size: $fs12;
   }
 
   .error {
     color: $color-danger;
     padding: 4px;
-    font-size: $fs10;
+    font-size: $fs12;
   }
 }
 
@@ -198,13 +234,13 @@ textarea {
   justify-content: center;
 
   label {
-    font-size: $fs10;
+    font-size: $fs12;
     color: $color-gray-30;
   }
 
   select {
     cursor: pointer;
-    font-size: $fs12;
+    font-size: $fs14;
     border: 0px;
     opacity: 0;
     z-index: 10;
@@ -224,6 +260,7 @@ textarea {
     justify-content: center;
     padding-top: 6px;
     padding-bottom: 6px;
+    padding-left: 15px;
 
   }
 
@@ -235,8 +272,6 @@ textarea {
     border-radius: 2px;
     border: 1px solid $color-gray-20;
     height: 40px;
-    padding-left: 15px;
-    padding-right: 15px;
 
     &.invalid {
       border-color: $color-danger;
@@ -261,7 +296,7 @@ textarea {
 
   .value {
     color: $color-gray-60;
-    font-size: $fs12;
+    font-size: $fs14;
     width: 100%;
     border: 0px;
     padding: 0px;
@@ -273,7 +308,8 @@ textarea {
     justify-content: center;
     align-items: center;
     padding-left: 10px;
-
+    padding-right: 10px;
+    pointer-events: none;
 
     svg {
       fill: $color-gray-30;
@@ -283,3 +319,4 @@ textarea {
     }
   }
 }
+

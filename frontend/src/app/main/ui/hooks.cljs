@@ -2,26 +2,21 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs S.L
+;; Copyright (c) UXBOX Labs S.L
 
 (ns app.main.ui.hooks
   "A collection of general purpose react hooks."
   (:require
-   [cljs.spec.alpha :as s]
-   [app.common.spec :as us]
-   [beicon.core :as rx]
-   [goog.events :as events]
-   [rumext.alpha :as mf]
-   [app.util.transit :as t]
+   [app.main.data.shortcuts :as dsc]
+   [app.main.store :as st]
    [app.util.dom :as dom]
    [app.util.dom.dnd :as dnd]
-   [app.util.webapi :as wapi]
+   [app.util.logging :as log]
    [app.util.timers :as ts]
-   ["mousetrap" :as mousetrap])
-  (:import goog.events.EventType))
+   [beicon.core :as rx]
+   [rumext.alpha :as mf]))
+
+(log/set-level! :warn)
 
 (defn use-rxsub
   [ob]
@@ -33,39 +28,14 @@
      #js [ob])
     state))
 
-(s/def ::shortcuts
-  (s/map-of ::us/string fn?))
-
 (defn use-shortcuts
-  [shortcuts]
-  (us/assert ::shortcuts shortcuts)
+  [key shortcuts]
   (mf/use-effect
+   #js [(str key) shortcuts]
    (fn []
-     (->> (seq shortcuts)
-          (run! (fn [[key f]]
-                  (mousetrap/bind key (fn [event]
-                                        (js/console.log "[debug]: shortcut:" key)
-                                        (.preventDefault event)
-                                        (f event))))))
-     (fn [] (mousetrap/reset))))
-  nil)
-
-(defn use-fullscreen
-  [ref]
-  (let [state (mf/use-state (dom/fullscreen?))
-        change (mf/use-callback #(reset! state (dom/fullscreen?)))
-        toggle (mf/use-callback (mf/deps @state)
-                                #(let [el (mf/ref-val ref)]
-                                   (swap! state not)
-                                   (if @state
-                                     (wapi/exit-fullscreen)
-                                     (wapi/request-fullscreen el))))]
-    (mf/use-effect
+     (st/emit! (dsc/push-shortcuts key shortcuts))
      (fn []
-       (.addEventListener js/document "fullscreenchange" change)
-       #(.removeEventListener js/document "fullscreenchange" change)))
-
-    [toggle @state]))
+       (st/emit! (dsc/pop-shortcuts key))))))
 
 (defn invisible-image
   []
@@ -112,7 +82,7 @@
 ;; things go weird.
 
 (defn use-sortable
-  [& {:keys [data-type data on-drop on-drag on-hold detect-center?] :as opts}]
+  [& {:keys [data-type data on-drop on-drag on-hold disabled detect-center?] :as opts}]
   (let [ref   (mf/use-ref)
         state (mf/use-state {:over nil
                              :timer nil
@@ -122,10 +92,7 @@
 
         cleanup
         (fn []
-          ;; (js/console.log "cleanup" (:name data))
-          (when-let [subscr (:subscr @state)]
-            ;; (js/console.log "unsubscribing" (:name data))
-            (rx/unsub! (:subscr @state)))
+          (some-> (:subscr @state) rx/unsub!)
           (swap! state (fn [state]
                               (-> state
                                   (cancel-timer)
@@ -140,13 +107,15 @@
 
         on-drag-start
         (fn [event]
-          (dom/stop-propagation event)
-          ;; (dnd/trace event data "drag-start")
-          (dnd/set-data! event data-type data)
-          (dnd/set-drag-image! event (invisible-image))
-          (dnd/set-allowed-effect! event "move")
-          (when (fn? on-drag)
-            (on-drag data)))
+          (if disabled
+            (dom/prevent-default event)
+            (do
+              (dom/stop-propagation event)
+              (dnd/set-data! event data-type data)
+              (dnd/set-drag-image! event (invisible-image))
+              (dnd/set-allowed-effect! event "move")
+              (when (fn? on-drag)
+                (on-drag data)))))
 
         on-drag-enter
         (fn [event]
@@ -227,7 +196,46 @@
 
 (defn use-stream
   "Wraps the subscription to a strem into a `use-effect` call"
-  [stream on-subscribe]
-  (mf/use-effect (fn []
-                   (let [sub (->> stream (rx/subs on-subscribe))]
-                     #(rx/dispose! sub)))))
+  ([stream on-subscribe]
+   (use-stream stream (mf/deps) on-subscribe))
+  ([stream deps on-subscribe]
+   (mf/use-effect
+    deps
+    (fn []
+      (let [sub (->> stream (rx/subs on-subscribe))]
+        #(rx/dispose! sub))))))
+
+;; https://reactjs.org/docs/hooks-faq.html#how-to-get-the-previous-props-or-state
+(defn use-previous
+  [value]
+  (let [ref (mf/use-ref value)]
+    (mf/use-effect
+     (mf/deps value)
+     (fn []
+       (mf/set-ref-val! ref value)))
+    (mf/ref-val ref)))
+
+(defn use-equal-memo
+  [val]
+  (let [ref (mf/use-ref nil)]
+    (when-not (= (mf/ref-val ref) val)
+      (mf/set-ref-val! ref val))
+    (mf/ref-val ref)))
+
+(defn- ssr?
+  "Checks if the current environment is run under a SSR context"
+  []
+  (try
+    (not js/window)
+    (catch :default _e
+      ;; When exception accessing window we're in ssr
+      true)))
+
+(defn use-effect-ssr
+  "Use effect that handles SSR"
+  [deps effect-fn]
+
+  (if (ssr?)
+    (let [ret (effect-fn)]
+      (when (fn? ret) (ret)))
+    (mf/use-effect deps effect-fn)))

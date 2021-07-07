@@ -2,25 +2,27 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.render
   (:require
-   [cljs.spec.alpha :as s]
-   [beicon.core :as rx]
-   [rumext.alpha :as mf]
-   [app.common.uuid :as uuid]
-   [app.common.pages :as cp]
-   [app.common.pages-helpers :as cph]
-   [app.common.math :as mth]
-   [app.common.geom.shapes :as geom]
-   [app.common.geom.point :as gpt]
    [app.common.geom.matrix :as gmt]
+   [app.common.geom.point :as gpt]
+   [app.common.geom.shapes :as gsh]
+   [app.common.math :as mth]
+   [app.common.pages :as cp]
+   [app.common.uuid :as uuid]
+   [app.main.data.fonts :as df]
    [app.main.exports :as exports]
-   [app.main.repo :as repo]))
+   [app.main.repo :as repo]
+   [app.main.store :as st]
+   [app.main.ui.shapes.embed :as embed]
+   [app.main.ui.shapes.filters :as filters]
+   [app.main.ui.shapes.shape :refer [shape-container]]
+   [app.util.dom :as dom]
+   [beicon.core :as rx]
+   [cuerdas.core :as str]
+   [rumext.alpha :as mf]))
 
 (mf/defc object-svg
   {::mf/wrap [mf/memo]}
@@ -34,21 +36,23 @@
                      (gpt/negate)
                      (gmt/translate-matrix))
 
-        mod-ids  (cons frame-id (cph/get-children frame-id objects))
+        mod-ids  (cons frame-id (cp/get-children frame-id objects))
         updt-fn  #(-> %1
                       (assoc-in [%2 :modifiers :displacement] modifier)
-                      (update %2 geom/transform-shape))
+                      (update %2 gsh/transform-shape))
 
         objects  (reduce updt-fn objects mod-ids)
         object   (get objects object-id)
 
-        width    (* (get-in object [:selrect :width]) zoom)
-        height   (* (get-in object [:selrect :height]) zoom)
+        ;; We need to get the shadows/blurs paddings to create the viewbox properly
+        {:keys [x y width height]} (filters/get-filters-bounds object)
 
-        vbox     (str (get-in object [:selrect :x]) " "
-                      (get-in object [:selrect :y]) " "
-                      (get-in object [:selrect :width]) " "
-                      (get-in object [:selrect :height]))
+        x        (* x zoom)
+        y        (* y zoom)
+        width    (* width zoom)
+        height   (* height zoom)
+
+        vbox     (str/join " " [x y width height])
 
         frame-wrapper
         (mf/use-memo
@@ -65,29 +69,91 @@
          (mf/deps objects)
          #(exports/shape-wrapper-factory objects))
         ]
-    [:svg {:id "screenshot"
-           :view-box vbox
-           :width width
-           :height height
-           :version "1.1"
-           :xmlnsXlink "http://www.w3.org/1999/xlink"
-           :xmlns "http://www.w3.org/2000/svg"}
-     (case (:type object)
-       :frame [:& frame-wrapper {:shape object :view-box vbox}]
-       :group [:& group-wrapper {:shape object}]
-       [:& shape-wrapper {:shape object}])]))
 
+    (mf/use-effect
+     (mf/deps width height)
+     #(dom/set-page-style {:size (str (mth/round width) "px "
+                                      (mth/round height) "px")}))
+
+    [:& (mf/provider embed/context) {:value true}
+     [:svg {:id "screenshot"
+            :view-box vbox
+            :width width
+            :height height
+            :version "1.1"
+            :xmlnsXlink "http://www.w3.org/1999/xlink"
+            :xmlns "http://www.w3.org/2000/svg"
+            :xmlns:penpot "https://penpot.app/xmlns"}
+
+      (case (:type object)
+        :frame [:& frame-wrapper {:shape object :view-box vbox}]
+        :group [:> shape-container {:shape object}
+                [:& group-wrapper {:shape object}]]
+        [:& shape-wrapper {:shape object}])]]))
+
+(defn- adapt-root-frame
+  [objects object-id]
+  (if (uuid/zero? object-id)
+    (let [object   (get objects object-id)
+          shapes   (cp/select-toplevel-shapes objects {:include-frames? true})
+          srect    (gsh/selection-rect shapes)
+          object   (merge object (select-keys srect [:x :y :width :height]))
+          object   (gsh/transform-shape object)
+          object   (assoc object :fill-color "#f0f0f0")]
+      (assoc objects (:id object) object))
+    objects))
+
+
+;; NOTE: for now, it is ok download the entire file for render only
+;; single page but in a future we need consider to add a specific
+;; backend entry point for download only the data of single page.
 
 (mf/defc render-object
-  [{:keys [page-id object-id] :as props}]
-  (let [data (mf/use-state nil)]
+  [{:keys [file-id page-id object-id] :as props}]
+  (let [objects (mf/use-state nil)]
     (mf/use-effect
+     (mf/deps file-id page-id object-id)
      (fn []
-       (let [subs (->> (repo/query! :page {:id page-id})
-                       (rx/subs (fn [result]
-                                  (reset! data (:data result)))))]
-         #(rx/dispose! subs))))
-    (when @data
-      [:& object-svg {:objects (:objects @data)
+       (->> (rx/zip
+             (repo/query! :font-variants {:file-id file-id})
+             (repo/query! :file {:id file-id}))
+            (rx/subs
+             (fn [[fonts {:keys [data]}]]
+               (when (seq fonts)
+                 (st/emit! (df/fonts-fetched fonts)))
+               (let [objs (get-in data [:pages-index page-id :objects])
+                     objs (adapt-root-frame objs object-id)]
+                 (reset! objects objs)))))
+       (constantly nil)))
+
+    (when @objects
+      [:& object-svg {:objects @objects
                       :object-id object-id
                       :zoom 1}])))
+
+(mf/defc render-sprite
+  [{:keys [file-id component-id] :as props}]
+  (let [file (mf/use-state nil)]
+    (mf/use-effect
+     (mf/deps file-id)
+     (fn []
+       (->> (repo/query! :file {:id file-id})
+            (rx/subs
+             (fn [result]
+               (reset! file result))))
+       (constantly nil)))
+
+    (when @file
+      [:*
+       [:& exports/components-sprite-svg {:data (:data @file) :embed true}
+
+        (when (some? component-id)
+          [:use {:x 0 :y 0
+                 :xlinkHref (str "#" component-id)}])]
+
+       (when-not (some? component-id)
+         [:ul
+          (for [[id data] (get-in @file [:data :components])]
+            (let [url (str "#/render-sprite/" (:id @file) "?component-id=" id)]
+              [:li [:a {:href url} (:name data)]]))])])))
+

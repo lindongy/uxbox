@@ -2,19 +2,19 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2019 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.streams
   "User interaction events and streams."
   (:require
-   [beicon.core :as rx]
    [app.main.store :as st]
-   [app.main.refs :as refs]
-   [app.common.geom.point :as gpt]))
+   [app.util.globals :as globals]
+   [app.util.keyboard :as kbd]
+   [beicon.core :as rx]))
 
 ;; --- User Events
 
-(defrecord KeyboardEvent [type key shift ctrl alt])
+(defrecord KeyboardEvent [type key shift ctrl alt meta])
 
 (defn keyboard-event?
   [v]
@@ -26,6 +26,11 @@
   [v]
   (instance? MouseEvent v))
 
+(defn mouse-down?
+  [v]
+  (and (mouse-event? v)
+       (= :down (:type v))))
+
 (defn mouse-up?
   [v]
   (and (mouse-event? v)
@@ -35,6 +40,11 @@
   [v]
   (and (mouse-event? v)
        (= :click (:type v))))
+
+(defn mouse-double-click?
+  [v]
+  (and (mouse-event? v)
+       (= :double-click (:type v))))
 
 (defrecord PointerEvent [source pt ctrl shift alt])
 
@@ -91,36 +101,39 @@
     (rx/subscribe-with ob sub)
     sub))
 
+
+(defonce window-blur
+  (->> (rx/from-event globals/window "blur")
+       (rx/share)))
+
 (defonce keyboard-alt
   (let [sub (rx/behavior-subject nil)
-        ob  (->> st/stream
-                 (rx/filter keyboard-event?)
-                 (rx/map :alt)
+        ob  (->> (rx/merge
+                  (->> st/stream
+                       (rx/filter keyboard-event?)
+                       (rx/filter kbd/altKey?)
+                       (rx/map #(= :down (:type %))))
+                  ;; Fix a situation caused by using `ctrl+alt` kind of shortcuts,
+                  ;; that makes keyboard-alt stream registring the key pressed but
+                  ;; on bluring the window (unfocus) the key down is never arrived.
+                  (->> window-blur
+                       (rx/map (constantly false))))
                  (rx/dedupe))]
-    (rx/subscribe-with ob sub)
-    sub))
+        (rx/subscribe-with ob sub)
+        sub))
 
-(defn mouse-position-deltas
-  [current]
-  (->> (rx/concat (rx/of current)
-                  (rx/sample 10 mouse-position))
-       (rx/buffer 2 1)
-       (rx/map (fn [[old new]]
-                 (gpt/subtract new old)))))
-
-
-(defonce mouse-position-delta
+(defonce keyboard-ctrl
   (let [sub (rx/behavior-subject nil)
-        ob  (->> st/stream
-                 (rx/filter pointer-event?)
-                 (rx/filter #(= :delta (:source %)))
-                 (rx/map :pt))]
-    (rx/subscribe-with ob sub)
-    sub))
-
-(defonce viewport-scroll
-  (let [sub (rx/behavior-subject nil)
-        sob (->> (rx/filter scroll-event? st/stream)
-                 (rx/map :point))]
-    (rx/subscribe-with sob sub)
+        ob  (->> (rx/merge
+                  (->> st/stream
+                       (rx/filter keyboard-event?)
+                       (rx/filter kbd/ctrlKey?)
+                       (rx/map #(= :down (:type %))))
+                  ;; Fix a situation caused by using `ctrl+alt` kind of shortcuts,
+                  ;; that makes keyboard-alt stream registring the key pressed but
+                  ;; on bluring the window (unfocus) the key down is never arrived.
+                  (->> window-blur
+                       (rx/map (constantly false))))
+                 (rx/dedupe))]
+        (rx/subscribe-with ob sub)
     sub))

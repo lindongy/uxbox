@@ -2,37 +2,38 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.webapi
   "HTML5 web api helpers."
   (:require
-   [promesa.core :as p]
-   [beicon.core :as rx]
-   [cuerdas.core :as str]
    [app.common.data :as d]
-   [app.util.transit :as t]))
+   [app.common.exceptions :as ex]
+   [app.util.object :as obj]
+   [beicon.core :as rx]
+   [cuerdas.core :as str]))
+
+(defn- file-reader
+  [f]
+  (rx/create
+   (fn [subs]
+     (let [reader (js/FileReader.)]
+       (obj/set! reader "onload" #(do (rx/push! subs (.-result reader))
+                                      (rx/end! subs)))
+       (f reader)
+       (constantly nil)))))
 
 (defn read-file-as-text
   [file]
-  (rx/create
-   (fn [sink]
-     (let [fr (js/FileReader.)]
-       (aset fr "onload" #(sink (rx/end (.-result fr))))
-       (.readAsText fr file)
-       (constantly nil)))))
+  (file-reader #(.readAsText %1 file)))
 
-(defn read-file-as-dataurl
+(defn read-file-as-array-buffer
   [file]
-  (rx/create
-   (fn [sick]
-     (let [fr (js/FileReader.)]
-       (aset fr "onload" #(sick (rx/end (.-result fr))))
-       (.readAsDataURL fr file))
-     (constantly nil))))
+  (file-reader #(.readAsArrayBuffer %1 file)))
+
+(defn read-file-as-data-url
+  [file]
+  (file-reader #(.readAsDataURL ^js %1 file)))
 
 (defn ^boolean blob?
   [v]
@@ -56,33 +57,21 @@
   (assert (blob? b) "invalid arguments")
   (js/URL.createObjectURL b))
 
-
-;; (defn get-image-size
-;;   [file]
-;;   (letfn [(on-load [sink img]
-;;             (let [size [(.-width img) (.-height img)]]
-;;               (sink (rx/end size))))
-;;           (on-subscribe [sink]
-;;             (let [img (js/Image.)
-;;                   uri (blob/create-uri file)]
-;;               (set! (.-onload img) (partial on-load sink img))
-;;               (set! (.-src img) uri)
-;;               #(blob/revoke-uri uri)))]
-;;     (rx/create on-subscribe)))
-
-
 (defn write-to-clipboard
   [data]
   (assert (string? data) "`data` should be string")
   (let [cboard (unchecked-get js/navigator "clipboard")]
     (.writeText ^js cboard data)))
 
-(defn- read-from-clipboard
+(defn read-from-clipboard
   []
   (let [cboard (unchecked-get js/navigator "clipboard")]
-    (rx/from (.readText ^js cboard))))
+    (if (.-readText ^js cboard)
+      (rx/from (.readText ^js cboard))
+      (throw (ex-info "This browser does not implement read from clipboard protocol"
+                      {:not-implemented true})))))
 
-(defn- read-image-from-clipboard
+(defn read-image-from-clipboard
   []
   (let [cboard (unchecked-get js/navigator "clipboard")
         read-item (fn [item]
@@ -95,10 +84,59 @@
          (rx/mapcat identity)     ;; Convert each item into an emission
          (rx/switch-map read-item))))
 
+(defn read-from-paste-event
+  [event]
+  (let [target (.-target ^js event)]
+    (when (and (not (.-isContentEditable target)) ;; ignore when pasting into
+               (not= (.-tagName target) "INPUT")) ;; an editable control
+      (.. ^js event getBrowserEvent -clipboardData))))
+
+(defn extract-text
+  [clipboard-data]
+  (when clipboard-data
+    (.getData clipboard-data "text")))
+
+(defn extract-images
+  [clipboard-data]
+  (when clipboard-data
+    (let [file-list (-> (.-files ^js clipboard-data))]
+      (->> (range (.-length file-list))
+           (map #(.item file-list %))
+           (filter #(str/starts-with? (.-type %) "image/"))))))
+
 (defn request-fullscreen
   [el]
-  (.requestFullscreen el))
+  (cond
+    (obj/in? el "requestFullscreen")
+    (.requestFullscreen el)
+
+    (obj/in? el "webkitRequestFullscreen")
+    (.webkitRequestFullscreen el)
+
+    :else
+    (ex/raise :type :not-supported
+              :hint "seems like the current browset does not support fullscreen api.")))
 
 (defn exit-fullscreen
   []
-  (.exitFullscreen js/document))
+  (cond
+    (obj/in? js/document "exitFullscreen")
+    (.exitFullscreen js/document)
+
+    (obj/in? js/document "webkitExitFullscreen")
+    (.webkitExitFullscreen js/document)
+
+    :else
+    (ex/raise :type :not-supported
+              :hint "seems like the current browset does not support fullscreen api.")))
+
+(defn observe-resize
+  [node]
+  (rx/create
+   (fn [subs]
+     (let [obs (js/ResizeObserver.
+                (fn [entries _]
+                  (rx/push! subs entries)))]
+       (.observe ^js obs node)
+       (fn []
+         (.disconnect ^js obs))))))

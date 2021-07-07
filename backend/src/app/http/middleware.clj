@@ -2,58 +2,100 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2019-2020 Andrey Antukh <niwi@niwi.nz>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.http.middleware
   (:require
-   [clojure.tools.logging :as log]
+   [app.common.transit :as t]
+   [app.metrics :as mtx]
+   [app.util.json :as json]
+   [app.util.logging :as l]
+   [buddy.core.codecs :as bc]
+   [buddy.core.hash :as bh]
+   [clojure.java.io :as io]
+   [ring.core.protocols :as rp]
    [ring.middleware.cookies :refer [wrap-cookies]]
    [ring.middleware.keyword-params :refer [wrap-keyword-params]]
    [ring.middleware.multipart-params :refer [wrap-multipart-params]]
-   [ring.middleware.params :refer [wrap-params]]
-   [ring.middleware.resource :refer [wrap-resource]]
-   [app.metrics :as mtx]
-   [app.common.exceptions :as ex]
-   [app.config :as cfg]
-   [app.util.transit :as t]))
+   [ring.middleware.params :refer [wrap-params]]))
 
-(defn- wrap-parse-request-body
+(defn wrap-server-timing
   [handler]
-  (letfn [(parse-body [body]
+  (let [seconds-from #(float (/ (- (System/nanoTime) %) 1000000000))]
+    (fn [request]
+      (let [start    (System/nanoTime)
+            response (handler request)]
+        (update response :headers
+                (fn [headers]
+                  (assoc headers "Server-Timing" (str "total;dur=" (seconds-from start)))))))))
+
+(defn wrap-parse-request-body
+  [handler]
+  (letfn [(parse-transit [body]
+            (let [reader (t/reader body)]
+              (t/read! reader)))
+
+          (parse-json [body]
+            (let [reader (io/reader body)]
+              (json/read reader)))
+
+          (parse [type body]
             (try
-              (let [reader (t/reader body)]
-                (t/read! reader))
+              (case type
+                :json (parse-json body)
+                :transit (parse-transit body))
               (catch Exception e
-                (ex/raise :type :parse
-                          :message "Unable to parse transit from request body."
-                          :cause e))))]
-    (fn [{:keys [headers body request-method] :as request}]
-      (handler
-       (cond-> request
-         (and (= "application/transit+json" (get headers "content-type"))
-              (not= request-method :get))
-         (assoc :body-params (parse-body body)))))))
+                (let [data {:type :parse
+                            :hint "unable to parse request body"
+                            :message (ex-message e)}]
+                  {:status 400
+                   :headers {"content-type" "application/transit+json"}
+                   :body (t/encode-str data {:type :json-verbose})}))))]
+
+    (fn [{:keys [headers body] :as request}]
+      (let [ctype (get headers "content-type")]
+        (handler
+         (case ctype
+           "application/transit+json"
+           (let [params (parse :transit body)]
+             (-> request
+                 (assoc :body-params params)
+                 (update :params merge params)))
+
+           "application/json"
+           (let [params (parse :json body)]
+             (-> request
+                 (assoc :body-params params)
+                 (update :params merge params)))
+
+           request))))))
 
 (def parse-request-body
   {:name ::parse-request-body
    :compile (constantly wrap-parse-request-body)})
 
+(defn- transit-streamable-body
+  [data opts]
+  (reify rp/StreamableResponseBody
+    (write-body-to-stream [_ response output-stream]
+      (try
+        (let [tw (t/writer output-stream opts)]
+          (t/write! tw data))
+        (finally
+          (.close ^java.io.OutputStream output-stream))))))
+
 (defn- impl-format-response-body
-  [response]
+  [response request]
   (let [body (:body response)
-        type (if (:debug-humanize-transit cfg/config)
-               :json-verbose
-               :json)]
+        opts {:type :json-verbose}]
     (cond
       (coll? body)
       (-> response
-          (assoc :body (t/encode body {:type type}))
-          (update :headers assoc
-                  "content-type"
-                  "application/transit+json"))
+          (update :headers assoc "content-type" "application/transit+json")
+          (assoc :body
+                 (if (= :post (:request-method request))
+                   (transit-streamable-body body opts)
+                   (t/encode body opts))))
 
       (nil? body)
       (assoc response :status 204 :body "")
@@ -66,13 +108,13 @@
   (fn [request]
     (let [response (handler request)]
       (cond-> response
-        (map? response) (impl-format-response-body)))))
+        (map? response) (impl-format-response-body request)))))
 
 (def format-response-body
   {:name ::format-response-body
    :compile (constantly wrap-format-response-body)})
 
-(defn- wrap-errors
+(defn wrap-errors
   [handler on-error]
   (fn [request]
     (try
@@ -89,7 +131,6 @@
    :wrap (fn [handler]
            (mtx/wrap-counter handler {:id "http__requests_counter"
                                       :help "Absolute http requests counter."}))})
-
 (def cookies
   {:name ::cookies
    :compile (constantly wrap-cookies)})
@@ -106,33 +147,46 @@
   {:name ::keyword-params
    :compile (constantly wrap-keyword-params)})
 
-(defn- wrap-development-cors
+(def server-timing
+  {:name ::server-timing
+   :compile (constantly wrap-server-timing)})
+
+(defn wrap-etag
   [handler]
-  (letfn [(add-cors-headers [response]
-            (update response :headers
-                    (fn [headers]
-                      (-> headers
-                          (assoc "access-control-allow-origin" "http://localhost:3449")
-                          (assoc "access-control-allow-methods" "GET,POST,DELETE,OPTIONS,PUT,HEAD,PATCH")
-                          (assoc "access-control-allow-credentials" "true")
-                          (assoc "access-control-expose-headers" "x-requested-with, content-type, cookie")
-                          (assoc "access-control-allow-headers" "content-type")))))]
+  (letfn [(generate-etag [{:keys [body] :as response}]
+            (str "W/\"" (-> body bh/blake2b-128 bc/bytes->hex) "\""))
+          (get-match [{:keys [headers] :as request}]
+            (get headers "if-none-match"))]
     (fn [request]
-      (if (= (:request-method request) :options)
-        (-> {:status 200 :body ""}
-            (add-cors-headers))
-        (let [response (handler request)]
-          (add-cors-headers response))))))
+      (let [response (handler request)]
+        (if (= :get (:request-method request))
+          (let [etag     (generate-etag response)
+                match    (get-match request)
+                response (update response :headers #(assoc % "ETag" etag))]
+            (cond-> response
+              (and (string? match)
+                   (= :get (:request-method request))
+                   (= etag match))
+              (-> response
+                  (assoc :body "")
+                  (assoc :status 304))))
+          response)))))
 
-(def development-cors
-  {:name ::development-cors
-   :compile (fn [& args]
-              (when *assert*
-                wrap-development-cors))})
+(def etag
+  {:name ::etag
+   :compile (constantly wrap-etag)})
 
-(def development-resources
-  {:name ::development-resources
-   :compile (fn [& args]
-              (when *assert*
-                #(wrap-resource % "public")))})
-
+(defn activity-logger
+  [handler]
+  (let [logger "penpot.profile-activity"]
+    (fn [{:keys [headers] :as request}]
+      (let [ip-addr    (get headers "x-forwarded-for")
+            profile-id (:profile-id request)
+            qstring    (:query-string request)]
+        (l/info ::l/async true
+                ::l/logger logger
+                :ip-addr ip-addr
+                :profile-id profile-id
+                :uri (str (:uri request) (when qstring (str "?" qstring)))
+                :method (name (:request-method request)))
+        (handler request)))))

@@ -2,189 +2,323 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.config
   "A configuration management."
+  (:refer-clojure :exclude [get])
   (:require
-   [clojure.spec.alpha :as s]
-   [clojure.tools.logging :as log]
-   [cuerdas.core :as str]
-   [environ.core :refer [env]]
-   [mount.core :refer [defstate]]
+   [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.spec :as us]
-   [app.util.time :as dt]))
+   [app.common.version :as v]
+   [app.util.time :as dt]
+   [clojure.core :as c]
+   [clojure.java.io :as io]
+   [clojure.pprint :as pprint]
+   [clojure.spec.alpha :as s]
+   [cuerdas.core :as str]
+   [environ.core :refer [env]]
+   [integrant.core :as ig]))
+
+(prefer-method print-method
+               clojure.lang.IRecord
+               clojure.lang.IDeref)
+
+(prefer-method pprint/simple-dispatch
+               clojure.lang.IPersistentMap
+               clojure.lang.IDeref)
+
+(defmethod ig/init-key :default
+  [_ data]
+  (d/without-nils data))
+
+(defmethod ig/prep-key :default
+  [_ data]
+  (if (map? data)
+    (d/without-nils data)
+    data))
 
 (def defaults
   {:http-server-port 6060
-   :http-server-cors "http://localhost:3449"
-   :database-uri "postgresql://127.0.0.1/uxbox"
-   :database-username "uxbox"
-   :database-password "uxbox"
+   :host "devenv"
+   :tenant "dev"
+   :database-uri "postgresql://postgres/penpot"
+   :database-username "penpot"
+   :database-password "penpot"
 
-   :media-directory "resources/public/media"
-   :assets-directory "resources/public/static"
+   :default-blob-version 3
+   :loggers-zmq-uri "tcp://localhost:45556"
 
-   :public-uri "http://localhost:3449/"
+   :asserts-enabled false
+
+   :public-uri "http://localhost:3449"
    :redis-uri "redis://redis/0"
-   :media-uri "http://localhost:3449/media/"
-   :assets-uri "http://localhost:3449/static/"
 
-   :image-process-max-threads 2
+   :srepl-host "127.0.0.1"
+   :srepl-port 6062
 
-   :sendmail-backend "console"
-   :sendmail-reply-to "no-reply@example.com"
-   :sendmail-from "no-reply@example.com"
+   :assets-storage-backend :fs
+   :storage-assets-fs-directory "assets"
+
+   :feedback-destination "info@example.com"
+   :feedback-enabled false
+
+   :assets-path "/internal/assets/"
+
+   :rlimits-password 10
+   :rlimits-image 2
+
+   :smtp-enabled false
+   :smtp-default-reply-to "Penpot <no-reply@example.com>"
+   :smtp-default-from "Penpot <no-reply@example.com>"
+
+   :profile-complaint-max-age (dt/duration {:days 7})
+   :profile-complaint-threshold 2
+
+   :profile-bounce-max-age (dt/duration {:days 7})
+   :profile-bounce-threshold 10
 
    :allow-demo-users true
    :registration-enabled true
-   :registration-domain-whitelist ""
-   :debug-humanize-transit true
 
-   ;; This is the time should transcurr after the last page
-   ;; modification in order to make the file ellegible for
-   ;; trimming. The value only supports s(econds) m(inutes) and
-   ;; h(ours) as time unit.
-   :file-trimming-max-age "72h"
+   :telemetry-enabled false
+   :telemetry-uri "https://telemetry.penpot.app/"
 
-   ;; LDAP auth disabled by default. Set ldap-auth-host to enable
-   ;:ldap-auth-host "ldap.mysupercompany.com"
-   ;:ldap-auth-port 389
-   ;:ldap-bind-dn "cn=admin,dc=ldap,dc=mysupercompany,dc=com"
-   ;:ldap-bind-password "verysecure"
-   ;:ldap-auth-ssl false
-   ;:ldap-auth-starttls false
-   ;:ldap-auth-base-dn "ou=People,dc=ldap,dc=mysupercompany,dc=com"
+   :ldap-user-query "(|(uid=:username)(mail=:username))"
+   :ldap-attrs-username "uid"
+   :ldap-attrs-email "mail"
+   :ldap-attrs-fullname "cn"
+   :ldap-attrs-photo "jpegPhoto"
 
-   :ldap-auth-user-query "(|(uid=$username)(mail=$username))"
-   :ldap-auth-username-attribute "uid"
-   :ldap-auth-email-attribute "mail"
-   :ldap-auth-fullname-attribute "displayName"
-   :ldap-auth-avatar-attribute "jpegPhoto"})
+   ;; a server prop key where initial project is stored.
+   :initial-project-skey "initial-project"
+   })
 
-(s/def ::http-server-port ::us/integer)
-(s/def ::http-server-debug ::us/boolean)
-(s/def ::http-server-cors ::us/string)
-(s/def ::database-username (s/nilable ::us/string))
+(s/def ::audit-enabled ::us/boolean)
+(s/def ::audit-archive-enabled ::us/boolean)
+(s/def ::audit-archive-uri ::us/string)
+(s/def ::audit-archive-gc-enabled ::us/boolean)
+(s/def ::audit-archive-gc-max-age ::dt/duration)
+
+(s/def ::secret-key ::us/string)
+(s/def ::allow-demo-users ::us/boolean)
+(s/def ::asserts-enabled ::us/boolean)
+(s/def ::assets-path ::us/string)
 (s/def ::database-password (s/nilable ::us/string))
 (s/def ::database-uri ::us/string)
-(s/def ::redis-uri ::us/string)
-(s/def ::assets-uri ::us/string)
-(s/def ::assets-directory ::us/string)
-(s/def ::media-uri ::us/string)
-(s/def ::media-directory ::us/string)
-(s/def ::sendmail-backend ::us/string)
-(s/def ::sendmail-backend-apikey ::us/string)
-(s/def ::sendmail-reply-to ::us/email)
-(s/def ::sendmail-from ::us/email)
-(s/def ::smtp-host ::us/string)
-(s/def ::smtp-port ::us/integer)
-(s/def ::smtp-user (s/nilable ::us/string))
-(s/def ::smtp-password (s/nilable ::us/string))
-(s/def ::smtp-tls ::us/boolean)
-(s/def ::smtp-ssl ::us/boolean)
-(s/def ::allow-demo-users ::us/boolean)
-(s/def ::registration-enabled ::us/boolean)
-(s/def ::registration-domain-whitelist ::us/string)
-(s/def ::debug-humanize-transit ::us/boolean)
-(s/def ::public-uri ::us/string)
-(s/def ::backend-uri ::us/string)
-(s/def ::image-process-max-threads ::us/integer)
-
+(s/def ::database-username (s/nilable ::us/string))
+(s/def ::default-blob-version ::us/integer)
+(s/def ::error-report-webhook ::us/string)
+(s/def ::feedback-destination ::us/string)
+(s/def ::feedback-enabled ::us/boolean)
+(s/def ::feedback-token ::us/string)
+(s/def ::github-client-id ::us/string)
+(s/def ::github-client-secret ::us/string)
+(s/def ::gitlab-base-uri ::us/string)
+(s/def ::gitlab-client-id ::us/string)
+(s/def ::gitlab-client-secret ::us/string)
 (s/def ::google-client-id ::us/string)
 (s/def ::google-client-secret ::us/string)
-
-(s/def ::ldap-auth-host ::us/string)
-(s/def ::ldap-auth-port ::us/integer)
+(s/def ::oidc-client-id ::us/string)
+(s/def ::oidc-client-secret ::us/string)
+(s/def ::oidc-base-uri ::us/string)
+(s/def ::oidc-token-uri ::us/string)
+(s/def ::oidc-auth-uri ::us/string)
+(s/def ::oidc-user-uri ::us/string)
+(s/def ::oidc-scopes ::us/set-of-str)
+(s/def ::oidc-roles ::us/set-of-str)
+(s/def ::oidc-roles-attr ::us/keyword)
+(s/def ::host ::us/string)
+(s/def ::http-server-port ::us/integer)
+(s/def ::http-session-idle-max-age ::dt/duration)
+(s/def ::http-session-updater-batch-max-age ::dt/duration)
+(s/def ::http-session-updater-batch-max-size ::us/integer)
+(s/def ::initial-project-skey ::us/string)
+(s/def ::ldap-attrs-email ::us/string)
+(s/def ::ldap-attrs-fullname ::us/string)
+(s/def ::ldap-attrs-photo ::us/string)
+(s/def ::ldap-attrs-username ::us/string)
+(s/def ::ldap-base-dn ::us/string)
 (s/def ::ldap-bind-dn ::us/string)
 (s/def ::ldap-bind-password ::us/string)
-(s/def ::ldap-auth-ssl ::us/boolean)
-(s/def ::ldap-auth-starttls ::us/boolean)
-(s/def ::ldap-auth-base-dn ::us/string)
-(s/def ::ldap-auth-user-query ::us/string)
-(s/def ::ldap-auth-username-attribute ::us/string)
-(s/def ::ldap-auth-email-attribute ::us/string)
-(s/def ::ldap-auth-fullname-attribute ::us/string)
-(s/def ::ldap-auth-avatar-attribute ::us/string)
-(s/def ::file-trimming-threshold ::dt/duration)
+(s/def ::ldap-host ::us/string)
+(s/def ::ldap-port ::us/integer)
+(s/def ::ldap-ssl ::us/boolean)
+(s/def ::ldap-starttls ::us/boolean)
+(s/def ::ldap-user-query ::us/string)
+(s/def ::loggers-loki-uri ::us/string)
+(s/def ::loggers-zmq-uri ::us/string)
+(s/def ::media-directory ::us/string)
+(s/def ::media-uri ::us/string)
+(s/def ::profile-bounce-max-age ::dt/duration)
+(s/def ::profile-bounce-threshold ::us/integer)
+(s/def ::profile-complaint-max-age ::dt/duration)
+(s/def ::profile-complaint-threshold ::us/integer)
+(s/def ::public-uri ::us/string)
+(s/def ::redis-uri ::us/string)
+(s/def ::registration-domain-whitelist ::us/set-of-str)
+(s/def ::registration-enabled ::us/boolean)
+(s/def ::rlimits-image ::us/integer)
+(s/def ::rlimits-password ::us/integer)
+(s/def ::smtp-default-from ::us/string)
+(s/def ::smtp-default-reply-to ::us/string)
+(s/def ::smtp-enabled ::us/boolean)
+(s/def ::smtp-host ::us/string)
+(s/def ::smtp-password (s/nilable ::us/string))
+(s/def ::smtp-port ::us/integer)
+(s/def ::smtp-ssl ::us/boolean)
+(s/def ::smtp-tls ::us/boolean)
+(s/def ::smtp-username (s/nilable ::us/string))
+(s/def ::srepl-host ::us/string)
+(s/def ::srepl-port ::us/integer)
+(s/def ::assets-storage-backend ::us/keyword)
+(s/def ::fdata-storage-backend ::us/keyword)
+(s/def ::storage-assets-fs-directory ::us/string)
+(s/def ::storage-assets-s3-bucket ::us/string)
+(s/def ::storage-assets-s3-region ::us/keyword)
+(s/def ::storage-fdata-s3-bucket ::us/string)
+(s/def ::storage-fdata-s3-region ::us/keyword)
+(s/def ::storage-fdata-s3-prefix ::us/string)
+(s/def ::telemetry-enabled ::us/boolean)
+(s/def ::telemetry-uri ::us/string)
+(s/def ::telemetry-with-taiga ::us/boolean)
+(s/def ::tenant ::us/string)
 
 (s/def ::config
-  (s/keys :opt-un [::http-server-cors
-                   ::http-server-debug
-                   ::http-server-port
-                   ::google-client-id
-                   ::google-client-secret
-                   ::public-uri
-                   ::database-username
+  (s/keys :opt-un [::secret-key
+                   ::allow-demo-users
+                   ::audit-enabled
+                   ::audit-archive-enabled
+                   ::audit-archive-uri
+                   ::audit-archive-gc-enabled
+                   ::audit-archive-gc-max-age
+                   ::asserts-enabled
                    ::database-password
                    ::database-uri
-                   ::assets-directory
-                   ::assets-uri
-                   ::media-directory
-                   ::media-uri
-                   ::sendmail-reply-to
-                   ::sendmail-from
-                   ::sendmail-backend
-                   ::sendmail-backend-apikey
-                   ::smtp-host
-                   ::smtp-port
-                   ::smtp-user
-                   ::smtp-password
-                   ::smtp-tls
-                   ::smtp-ssl
-                   ::file-trimming-max-age
-                   ::debug-humanize-transit
-                   ::allow-demo-users
-                   ::registration-enabled
-                   ::registration-domain-whitelist
-                   ::image-process-max-threads
-                   ::ldap-auth-host
-                   ::ldap-auth-port
+                   ::database-username
+                   ::default-blob-version
+                   ::error-report-webhook
+                   ::feedback-destination
+                   ::feedback-enabled
+                   ::feedback-token
+                   ::github-client-id
+                   ::github-client-secret
+                   ::gitlab-base-uri
+                   ::gitlab-client-id
+                   ::gitlab-client-secret
+                   ::google-client-id
+                   ::google-client-secret
+                   ::oidc-client-id
+                   ::oidc-client-secret
+                   ::oidc-base-uri
+                   ::oidc-token-uri
+                   ::oidc-auth-uri
+                   ::oidc-user-uri
+                   ::oidc-scopes
+                   ::oidc-roles-attr
+                   ::oidc-roles
+                   ::host
+                   ::http-server-port
+                   ::http-session-idle-max-age
+                   ::http-session-updater-batch-max-age
+                   ::http-session-updater-batch-max-size
+                   ::initial-project-skey
+                   ::ldap-attrs-email
+                   ::ldap-attrs-fullname
+                   ::ldap-attrs-photo
+                   ::ldap-attrs-username
+                   ::ldap-base-dn
                    ::ldap-bind-dn
                    ::ldap-bind-password
-                   ::ldap-auth-ssl
-                   ::ldap-auth-starttls
-                   ::ldap-auth-base-dn
-                   ::ldap-auth-user-query
-                   ::ldap-auth-username-attribute
-                   ::ldap-auth-email-attribute
-                   ::ldap-auth-fullname-attribute
-                   ::ldap-auth-avatar-attribute]))
+                   ::ldap-host
+                   ::ldap-port
+                   ::ldap-ssl
+                   ::ldap-starttls
+                   ::ldap-user-query
+                   ::local-assets-uri
+                   ::loggers-loki-uri
+                   ::loggers-zmq-uri
+                   ::profile-bounce-max-age
+                   ::profile-bounce-threshold
+                   ::profile-complaint-max-age
+                   ::profile-complaint-threshold
+                   ::public-uri
+                   ::redis-uri
+                   ::registration-domain-whitelist
+                   ::registration-enabled
+                   ::rlimits-image
+                   ::rlimits-password
+                   ::smtp-default-from
+                   ::smtp-default-reply-to
+                   ::smtp-enabled
+                   ::smtp-host
+                   ::smtp-password
+                   ::smtp-port
+                   ::smtp-ssl
+                   ::smtp-tls
+                   ::smtp-username
 
-(defn env->config
-  [env]
-  (reduce-kv
-   (fn [acc k v]
-     (cond-> acc
-       (str/starts-with? (name k) "uxbox-")
-       (assoc (keyword (subs (name k) 6)) v)
+                   ::srepl-host
+                   ::srepl-port
 
-       (str/starts-with? (name k) "app-")
-       (assoc (keyword (subs (name k) 4)) v)))
-   {}
-   env))
+                   ::assets-storage-backend
+                   ::storage-assets-fs-directory
+                   ::storage-assets-s3-bucket
+                   ::storage-assets-s3-region
 
-(defn read-config
-  [env]
-  (->> (env->config env)
-       (merge defaults)
-       (us/conform ::config)))
+                   ::fdata-storage-backend
+                   ::storage-fdata-s3-bucket
+                   ::storage-fdata-s3-region
+                   ::storage-fdata-s3-prefix
 
-(defn read-test-config
-  [env]
-  (assoc (read-config env)
-         :redis-uri "redis://redis/1"
-         :database-uri "postgresql://postgres/uxbox_test"
-         :media-directory "/tmp/app/media"
-         :assets-directory "/tmp/app/static"
-         :migrations-verbose false))
+                   ::telemetry-enabled
+                   ::telemetry-uri
+                   ::telemetry-referer
+                   ::telemetry-with-taiga
+                   ::tenant]))
 
-(defstate config
-  :start (read-config env))
+(defn read-env
+  [prefix]
+  (let [prefix (str prefix "-")
+        len    (count prefix)]
+    (reduce-kv
+     (fn [acc k v]
+       (cond-> acc
+         (str/starts-with? (name k) prefix)
+         (assoc (keyword (subs (name k) len)) v)))
+     {}
+     env)))
 
-(def default-deletion-delay
-  (dt/duration {:hours 48}))
+(defn- read-config
+  []
+  (try
+    (->> (read-env "penpot")
+         (merge defaults)
+         (us/conform ::config))
+    (catch Throwable e
+      (when (ex/ex-info? e)
+        (println ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")
+        (println "Error on validating configuration:")
+        (println (:explain (ex-data e))
+        (println ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;")))
+      (throw e))))
+
+(def version (v/parse (or (some-> (io/resource "version.txt")
+                                  (slurp)
+                                  (str/trim))
+                          "%version%")))
+(def config (atom (read-config)))
+
+(def deletion-delay
+  (dt/duration {:days 7}))
+
+(defn get
+  "A configuration getter. Helps code be more testable."
+  ([key]
+   (c/get @config key))
+  ([key default]
+   (c/get @config key default)))
+
+;; Set value for all new threads bindings.
+(alter-var-root #'*assert* (constantly (get :asserts-enabled)))

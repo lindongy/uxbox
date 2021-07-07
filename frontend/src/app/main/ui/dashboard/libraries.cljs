@@ -2,43 +2,40 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.dashboard.libraries
   (:require
-   [okulary.core :as l]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]
-   [app.util.i18n :as i18n :refer [tr]]
-   [app.util.dom :as dom]
-   [app.util.router :as rt]
-   [app.main.data.dashboard :as dsh]
+   [app.main.data.dashboard :as dd]
+   [app.main.refs :as refs]
    [app.main.store :as st]
-   [app.main.ui.modal :as modal]
-   [app.main.ui.keyboard :as kbd]
-   [app.main.ui.confirm :refer [confirm-dialog]]
-   [app.main.ui.components.context-menu :refer [context-menu]]
-   [app.main.ui.dashboard.grid :refer [grid]]))
-
-(def files-ref
-  (-> (comp vals :files)
-      (l/derived st/state)))
+   [app.main.ui.dashboard.grid :refer [grid]]
+   [app.util.dom :as dom]
+   [app.util.i18n :as i18n :refer [tr]]
+   [rumext.alpha :as mf]))
 
 (mf/defc libraries-page
-  [{:keys [section team-id] :as props}]
-  (let [files (->> (mf/deref files-ref)
-                   (sort-by :modified-at)
-                   (reverse))]
+  [{:keys [team] :as props}]
+  (let [files-map (mf/deref refs/dashboard-shared-files)
+        files     (->> (vals files-map)
+                       (sort-by :modified-at)
+                       (reverse))]
     (mf/use-effect
-     (mf/deps section team-id)
-     #(st/emit! (dsh/initialize-libraries team-id)))
+     (mf/deps team)
+     (fn []
+       (dom/set-html-title (tr "title.dashboard.shared-libraries"
+                               (if (:is-default team)
+                                 (tr "dashboard.your-penpot")
+                                 (:name team))))))
+
+    (mf/use-effect
+     (st/emitf (dd/fetch-shared-files)
+               (dd/clear-selected-files)))
 
     [:*
-      [:header.main-bar
-       [:h1.dashboard-title (tr "dashboard.header.libraries")]]
-      [:section.libraries-page
-       [:& grid {:files files :hide-new? true}]]]))
+     [:header.dashboard-header
+      [:div.dashboard-title
+       [:h1 (tr "dashboard.libraries-title")]]]
+     [:section.dashboard-container
+      [:& grid {:files files}]]]))
 

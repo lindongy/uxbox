@@ -14,22 +14,19 @@ volumes:
 services:
   main:
     privileged: true
-    image: "uxbox-devenv"
-    hostname: "uxbox-devenv-main"
-    container_name: "uxbox-devenv-main"
-    command: "/home/uxbox/init.sh"
+    image: "penpotapp/devenv:latest"
+    build:
+      context: "."
+    container_name: "penpot-devenv-main"
     stop_signal: SIGINT
 
     depends_on:
       - postgres
-      - smtp
       - redis
 
     volumes:
-      - "user_data:/home/uxbox/local"
-      - "${HOME}/.m2:/home/uxbox/.m2"
-      - "${PWD}:/home/uxbox/uxbox"
-      - ./files/nginx.conf:/etc/nginx/nginx.conf
+      - "user_data:/home/penpot/"
+      - "${PWD}:/home/penpot/penpot"
 
     ports:
       - 3447:3447
@@ -40,45 +37,66 @@ services:
       - 9090:9090
 
     environment:
-      - APP_DATABASE_URI=postgresql://postgres/uxbox
-      - APP_DATABASE_USERNAME=uxbox
-      - APP_DATABASE_PASSWORD=uxbox
-      - APP_SENDMAIL_BACKEND=smtp
-      - APP_SMTP_HOST=smtp
-      - APP_SMTP_PORT=25
+      - EXTERNAL_UID=${CURRENT_USER_ID}
+      - PENPOT_SECRET_KEY=super-secret-devenv-key
+      # STMP setup
+      - PENPOT_SMTP_ENABLED=true
+      - PENPOT_SMTP_DEFAULT_FROM=no-reply@example.com
+      - PENPOT_SMTP_DEFAULT_REPLY_TO=no-reply@example.com
+      - PENPOT_SMTP_HOST=mailer
+      - PENPOT_SMTP_PORT=1025
+      - PENPOT_SMTP_USERNAME=
+      - PENPOT_SMTP_PASSWORD=
+      - PENPOT_SMTP_SSL=false
+      - PENPOT_SMTP_TLS=false
 
-  smtp:
-    container_name: "uxbox-devenv-smtp"
-    image: mwader/postfix-relay
-    restart: always
-    environment:
-      - POSTFIX_myhostname=smtp.uxbox.io
-      - OPENDKIM_DOMAINS=smtp.uxbox.io
+      # LDAP setup
+      - PENPOT_LDAP_HOST=ldap
+      - PENPOT_LDAP_PORT=10389
+      - PENPOT_LDAP_SSL=false
+      - PENPOT_LDAP_STARTTLS=false
+      - PENPOT_LDAP_BASE_DN=ou=people,dc=planetexpress,dc=com
+      - PENPOT_LDAP_BIND_DN=cn=admin,dc=planetexpress,dc=com
+      - PENPOT_LDAP_BIND_PASSWORD=GoodNewsEveryone
+      - PENPOT_LDAP_ATTRS_USERNAME=uid
+      - PENPOT_LDAP_ATTRS_EMAIL=mail
+      - PENPOT_LDAP_ATTRS_FULLNAME=cn
+      - PENPOT_LDAP_ATTRS_PHOTO=jpegPhoto
 
   postgres:
-    image: postgres:12
+    image: postgres:13
     command: postgres -c config_file=/etc/postgresql.conf
-    hostname: "uxbox-devenv-postgres"
-    container_name: "uxbox-devenv-postgres"
     restart: always
     stop_signal: SIGINT
-    ports:
-      - 5432:5432
     environment:
       - POSTGRES_INITDB_ARGS=--data-checksums
-      - POSTGRES_DB=uxbox
-      - POSTGRES_USER=uxbox
-      - POSTGRES_PASSWORD=uxbox
+      - POSTGRES_DB=penpot
+      - POSTGRES_USER=penpot
+      - POSTGRES_PASSWORD=penpot
     volumes:
       - ./files/postgresql.conf:/etc/postgresql.conf
       - ./files/postgresql_init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_data:/var/lib/postgresql/data
 
   redis:
-    image: redis:6.0.6
-    hostname: "uxbox-devenv-redis"
-    container_name: "uxbox-devenv-redis"
+    image: redis:5.0.7
+    hostname: "penpot-devenv-redis"
+    container_name: "penpot-devenv-redis"
     restart: always
 
+  mailer:
+    image: sj26/mailcatcher:latest
+    restart: always
+    expose:
+      - '1025'
     ports:
-      - 6379:6379
+      - "1080:1080"
+
+  ldap:
+    image: rroemhild/test-openldap:2.1
+    expose:
+      - '10389'
+      - '10636'
+    ports:
+      - "10389:10389"
+      - "10636:10636"

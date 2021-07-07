@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-set -ex
 
-# clojure -Ojmx-remote -A:dev -e "(set! *warn-on-reflection* true)" -m rebel-readline.main
-# clojure -Ojmx-remote -A:dev -J-XX:+UnlockExperimentalVMOptions -J-XX:+UseZGC -J-Xms128m -J-Xmx128m -m rebel-readline.main
-clojure -Ojmx-remote -A:dev -J-Xms128m -J-Xmx128m -m rebel-readline.main
+export PENPOT_ASSERTS_ENABLED=true
+
+export OPTIONS="-A:jmx-remote:dev -J-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager -J-Dlog4j2.configurationFile=log4j2-devenv.xml -J-Djdk.attach.allowAttachSelf -J-XX:+UseZGC -J-XX:ConcGCThreads=1 -J-XX:-OmitStackTraceInFastThrow -J-Xms50m -J-Xmx512m";
+# export OPTIONS="$OPTIONS -J-XX:+UnlockDiagnosticVMOptions";
+# export OPTIONS="$OPTIONS -J-XX:-TieredCompilation -J-XX:CompileThreshold=10000";
+
+export OPTIONS_EVAL="nil"
+# export OPTIONS_EVAL="(set! *warn-on-reflection* true)"
+
+set -ex
+exec clojure $OPTIONS -M -e "$OPTIONS_EVAL" -m rebel-readline.main

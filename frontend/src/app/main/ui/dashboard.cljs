@@ -2,29 +2,28 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.dashboard
   (:require
-   [cuerdas.core :as str]
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i]
-   [app.common.exceptions :as ex]
-   [app.common.uuid :as uuid]
    [app.common.spec :as us]
-   [app.main.store :as st]
+   [app.config :as cf]
+   [app.main.data.dashboard :as dd]
+   [app.main.data.modal :as modal]
    [app.main.refs :as refs]
-   [app.main.ui.dashboard.sidebar :refer [sidebar]]
-   [app.main.ui.dashboard.search :refer [search-page]]
-   [app.main.ui.dashboard.project :refer [project-page]]
-   [app.main.ui.dashboard.recent-files :refer [recent-files-page]]
+   [app.main.store :as st]
+   [app.main.ui.context :as ctx]
+   [app.main.ui.dashboard.export]
+   [app.main.ui.dashboard.files :refer [files-section]]
+   [app.main.ui.dashboard.fonts :refer [fonts-page font-providers-page]]
+   [app.main.ui.dashboard.import]
    [app.main.ui.dashboard.libraries :refer [libraries-page]]
-   [app.main.ui.dashboard.profile :refer [profile-section]]
-   [app.util.router :as rt]
-   [app.util.i18n :as i18n :refer [t]]))
+   [app.main.ui.dashboard.projects :refer [projects-section]]
+   [app.main.ui.dashboard.search :refer [search-page]]
+   [app.main.ui.dashboard.sidebar :refer [sidebar]]
+   [app.main.ui.dashboard.team :refer [team-settings-page team-members-page]]
+   [app.util.timers :as tm]
+   [rumext.alpha :as mf]))
 
 (defn ^boolean uuid-str?
   [s]
@@ -32,9 +31,8 @@
        (boolean (re-seq us/uuid-rx s))))
 
 (defn- parse-params
-  [route profile]
-  (let [route-name  (get-in route [:data :name])
-        search-term (get-in route [:params :query :search-term])
+  [route]
+  (let [search-term (get-in route [:params :query :search-term])
         team-id     (get-in route [:params :path :team-id])
         project-id  (get-in route [:params :path :project-id])]
     (cond->
@@ -44,58 +42,94 @@
       (assoc :team-id (uuid team-id))
 
       (uuid-str? project-id)
-      (assoc :project-id (uuid project-id))
+      (assoc :project-id (uuid project-id)))))
 
-      ;; TODO: delete the usage of "drafts"
+(mf/defc dashboard-content
+  [{:keys [team projects project section search-term profile] :as props}]
+  [:div.dashboard-content {:on-click (st/emitf (dd/clear-selected-files))}
+   (case section
+     :dashboard-projects
+     [:& projects-section {:team team :projects projects}]
 
-      (= "drafts" project-id)
-      (assoc :project-id (:default-project-id profile)))))
+     :dashboard-fonts
+     [:& fonts-page {:team team}]
 
-(declare global-notifications)
+     :dashboard-font-providers
+     [:& font-providers-page {:team team}]
 
+     :dashboard-files
+     (when project
+       [:& files-section {:team team :project project}])
+
+     :dashboard-search
+     [:& search-page {:team team
+                      :search-term search-term}]
+
+     :dashboard-libraries
+     [:& libraries-page {:team team}]
+
+     :dashboard-team-members
+     [:& team-members-page {:team team :profile profile}]
+
+     :dashboard-team-settings
+     [:& team-settings-page {:team team :profile profile}]
+
+     nil)])
 
 (mf/defc dashboard
   [{:keys [route] :as props}]
-  (let [profile (mf/deref refs/profile)
-        page (get-in route [:data :name])
-        {:keys [search-term team-id project-id] :as params}
-        (parse-params route profile)]
-    [:*
-     [:& global-notifications {:profile profile}]
-     [:section.dashboard-layout
-      [:div.main-logo
-        [:a {:on-click #(st/emit! (rt/nav :dashboard-team {:team-id team-id}))}
-         i/logo-icon]]
-      [:& profile-section {:profile profile}]
-      [:& sidebar {:team-id team-id
-                   :project-id project-id
-                   :section page
-                   :search-term search-term}]
-      [:div.dashboard-content
-       (case page
-         :dashboard-search
-         [:& search-page {:team-id team-id :search-term search-term}]
+  (let [profile      (mf/deref refs/profile)
+        section      (get-in route [:data :name])
+        params       (parse-params route)
 
-         :dashboard-team
-         [:& recent-files-page {:team-id team-id}]
+        project-id   (:project-id params)
+        team-id      (:team-id params)
+        search-term  (:search-term params)
 
-         :dashboard-libraries
-         [:& libraries-page {:team-id team-id}]
+        teams        (mf/deref refs/teams)
+        team         (get teams team-id)
 
-         :dashboard-project
-         [:& project-page {:team-id team-id
-                           :project-id project-id}])]]]))
+        projects     (mf/deref refs/dashboard-projects)
+        project      (get projects project-id)]
 
+    (mf/use-effect
+     (mf/deps team-id)
+     (st/emitf (dd/initialize {:id team-id})))
 
-(mf/defc global-notifications
-  [{:keys [profile] :as props}]
-  (let [locale  (mf/deref i18n/locale)]
-    (when (and profile
-               (not= uuid/zero (:id profile))
-               (= (:pending-email profile)
-                  (:email profile)))
-    [:section.banner.error.quick
-     [:div.content
-      [:div.icon i/msg-warning]
-      [:span (t locale "settings.notifications.email-not-verified" (:email profile))]]])))
+    (mf/use-effect
+     (mf/deps)
+     (fn []
+       (let [props   (:props profile)
+             version (:release-notes-viewed props)]
+         (when (and (:onboarding-viewed props)
+                    (not= version (:main @cf/version))
+                    (not= "0.0" (:main @cf/version)))
+           (tm/schedule 1000 #(st/emit! (modal/show {:type :release-notes :version (:main @cf/version)})))))))
 
+    [:& (mf/provider ctx/current-team-id) {:value team-id}
+     [:& (mf/provider ctx/current-project-id) {:value project-id}
+
+      ;; NOTE: dashboard events and other related functions assumes
+      ;; that the team is a implicit context variable that is
+      ;; available using react context or accessing
+      ;; the :current-team-id on the state. We set the key to the
+      ;; team-id becase we want to completly refresh all the
+      ;; components on team change. Many components assumess that the
+      ;; team is already set so don't put the team into mf/deps.
+      (when team
+        [:section.dashboard-layout {:key (:id team)}
+         [:& sidebar
+          {:team team
+           :projects projects
+           :project project
+           :profile profile
+           :section section
+           :search-term search-term}]
+         (when (and team (seq projects))
+           [:& dashboard-content
+            {:projects projects
+             :profile profile
+             :project project
+             :section section
+             :search-term search-term
+             :team team}])])]]))

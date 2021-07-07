@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2020 UXBOX Labs SL
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.util.perf
   "Performance profiling for react components."
@@ -27,16 +27,6 @@
 ;; percentiles of render time measures. The log function is
 ;; automatically debouced for avod excesive spam to the console.
 
-;; #?(:clj
-;;    (defmacro with-measure
-;;      [name & body]
-;;      `(let [start# (js/performance.now)
-;;             res# (do ~@body)
-;;             end# (js/performance.now)
-;;             time# (.toFixed (- end# start#) 2)]
-;;         (println (str "[perf|" ~name "] => " time#))
-;;         res#)))
-
 (defn tdigest
   []
   (specify! (td/TDigest.)
@@ -49,7 +39,7 @@
       this)))
 
 (defn tdigest-summary
-  [td]
+  [^js td]
   (str "samples=" (unchecked-get td "n") "\n"
        "Q50=" (.percentile td 0.50) "\n"
        "Q75=" (.percentile td 0.75) "\n"
@@ -111,7 +101,7 @@
                    (mf/deps label)
                    #(on-render-factory label))]
     (if enabled?
-      [:> react/Profiler {:id label
-                          :on-render on-render}
+      [:> react/Profiler #js {:id label
+                              :onRender on-render}
        children]
       children)))

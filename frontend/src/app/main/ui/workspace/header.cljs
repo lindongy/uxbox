@@ -2,34 +2,63 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; This Source Code Form is "Incompatible With Secondary Licenses", as
-;; defined by the Mozilla Public License, v. 2.0.
-;;
-;; Copyright (c) 2015-2017 Andrey Antukh <niwi@niwi.nz>
-;; Copyright (c) 2015-2017 Juan de la Cruz <delacruzgarciajuan@gmail.com>
+;; Copyright (c) UXBOX Labs SL
 
 (ns app.main.ui.workspace.header
   (:require
-   [rumext.alpha :as mf]
-   [app.main.ui.icons :as i :include-macros true]
+   [app.common.data :as d]
+   [app.common.math :as mth]
    [app.config :as cfg]
-   [app.main.data.history :as udh]
+   [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.shortcuts :as sc]
    [app.main.refs :as refs]
+   [app.main.repo :as rp]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
-   [app.main.ui.modal :as modal]
-   [app.main.ui.confirm :refer [confirm-dialog]]
-   [app.main.ui.workspace.presence :as presence]
-   [app.util.i18n :as i18n :refer [t]]
-   [app.util.data :refer [classnames]]
-   [app.common.math :as mth]
-   [app.util.router :as rt]))
+   [app.main.ui.icons :as i]
+   [app.main.ui.workspace.presence :refer [active-sessions]]
+   [app.util.dom :as dom]
+   [app.util.i18n :as i18n :refer [tr]]
+   [app.util.keyboard :as kbd]
+   [app.util.router :as rt]
+   [beicon.core :as rx]
+   [okulary.core :as l]
+   [rumext.alpha :as mf]))
 
 ;; --- Zoom Widget
 
+(def workspace-persistence-ref
+  (l/derived :workspace-persistence st/state))
+
+(mf/defc persistence-state-widget
+  {::mf/wrap [mf/memo]}
+  []
+  (let [data (mf/deref workspace-persistence-ref)]
+    [:div.persistence-status-widget
+     (cond
+       (= :pending (:status data))
+       [:div.pending
+        [:span.label (tr "workspace.header.unsaved")]]
+
+       (= :saving (:status data))
+       [:div.saving
+        [:span.icon i/toggle]
+        [:span.label (tr "workspace.header.saving")]]
+
+       (= :saved (:status data))
+       [:div.saved
+        [:span.icon i/tick]
+        [:span.label (tr "workspace.header.saved")]]
+
+       (= :error (:status data))
+       [:div.error {:title "There was an error saving the data. Please refresh if this persists."}
+        [:span.icon i/msg-warning]
+        [:span.label (tr "workspace.header.save-error")]])]))
+
+
 (mf/defc zoom-widget
-  {:wrap [mf/memo]}
+  {::mf/wrap [mf/memo]}
   [{:keys [zoom
            on-increase
            on-decrease
@@ -45,46 +74,111 @@
                    :on-close #(reset! show-dropdown? false)}
       [:ul.zoom-dropdown
        [:li {:on-click on-increase}
-        "Zoom in" [:span "+"]]
+        "Zoom in" [:span (sc/get-tooltip :increase-zoom)]]
        [:li {:on-click on-decrease}
-        "Zoom out" [:span "-"]]
+        "Zoom out" [:span (sc/get-tooltip :decrease-zoom)]]
        [:li {:on-click on-zoom-reset}
-        "Zoom to 100%" [:span "Shift + 0"]]
+        "Zoom to 100%" [:span (sc/get-tooltip :reset-zoom)]]
        [:li {:on-click on-zoom-fit}
-        "Zoom to fit all" [:span "Shift + 1"]]
+        "Zoom to fit all" [:span (sc/get-tooltip :fit-all)]]
        [:li {:on-click on-zoom-selected}
-        "Zoom to selected" [:span "Shift + 2"]]]]]))
+        "Zoom to selected" [:span (sc/get-tooltip :zoom-selected)]]]]]))
 
 ;; --- Header Users
 
 (mf/defc menu
-  [{:keys [layout project file] :as props}]
+  [{:keys [layout project file team-id] :as props}]
   (let [show-menu? (mf/use-state false)
-        locale (i18n/use-locale)
+        editing? (mf/use-state false)
 
-        add-shared-fn #(st/emit! nil (dw/set-file-shared (:id file) true))
+        edit-input-ref (mf/use-ref nil)
+
+        add-shared-fn
+        (st/emitf (dw/set-file-shared (:id file) true))
+
+        del-shared-fn
+        (st/emitf (dw/set-file-shared (:id file) false))
+
         on-add-shared
-        #(modal/show! confirm-dialog
-                        {:message (t locale "dashboard.grid.add-shared-message" (:name file))
-                         :hint (t locale "dashboard.grid.add-shared-hint")
-                         :accept-text (t locale "dashboard.grid.add-shared-accept")
-                         :not-danger? true
-                         :on-accept add-shared-fn})
+        (mf/use-fn
+         (mf/deps file)
+         (st/emitf (modal/show
+                    {:type :confirm
+                     :message ""
+                     :title (tr "modals.add-shared-confirm.message" (:name file))
+                     :hint (tr "modals.add-shared-confirm.hint")
+                     :cancel-label :omit
+                     :accept-label (tr "modals.add-shared-confirm.accept")
+                     :accept-style :primary
+                     :on-accept add-shared-fn})))
 
-        remove-shared-fn #(st/emit! nil (dw/set-file-shared (:id file) false))
         on-remove-shared
-        #(modal/show! confirm-dialog
-                        {:message (t locale "dashboard.grid.remove-shared-message" (:name file))
-                         :hint (t locale "dashboard.grid.remove-shared-hint")
-                         :accept-text (t locale "dashboard.grid.remove-shared-accept")
-                         :not-danger? false
-                         :on-accept remove-shared-fn})]
+        (mf/use-fn
+         (mf/deps file)
+         (st/emitf (modal/show
+                    {:type :confirm
+                     :message ""
+                     :title (tr "modals.remove-shared-confirm.message" (:name file))
+                     :hint (tr "modals.remove-shared-confirm.hint")
+                     :cancel-label :omit
+                     :accept-label (tr "modals.remove-shared-confirm.accept")
+                     :on-accept del-shared-fn})))
+
+
+        handle-blur (fn [_]
+                      (let [value (-> edit-input-ref mf/ref-val dom/get-value)]
+                        (st/emit! (dw/rename-file (:id file) value)))
+                      (reset! editing? false))
+
+        handle-name-keydown (fn [event]
+                              (when (kbd/enter? event)
+                                (handle-blur event)))
+        start-editing-name (fn [event]
+                             (dom/prevent-default event)
+                             (reset! editing? true))
+
+        on-export-files
+        (mf/use-callback
+         (mf/deps file team-id)
+         (fn [_]
+           (->> (rx/of file)
+                (rx/flat-map
+                 (fn [file]
+                   (->> (rp/query :file-libraries {:file-id (:id file)})
+                        (rx/map #(assoc file :has-libraries? (d/not-empty? %))))))
+                (rx/reduce conj [])
+                (rx/subs
+                 (fn [files]
+                   (st/emit!
+                    (modal/show
+                     {:type :export
+                      :team-id team-id
+                      :has-libraries? (->> files (some :has-libraries?))
+                      :files files})))))))]
+
+    (mf/use-effect
+     (mf/deps @editing?)
+     #(when @editing?
+        (dom/select-text! (mf/ref-val edit-input-ref))))
 
     [:div.menu-section
      [:div.btn-icon-dark.btn-small {:on-click #(reset! show-menu? true)} i/actions]
-     [:div.project-tree {:alt (t locale "header.sitemap")}
-      [:span.project-name (:name project) " /"]
-      [:span (:name file)]]
+     [:div.project-tree {:alt (tr "workspace.sitemap")}
+      [:span.project-name
+       {:on-click #(st/emit! (rt/navigate :dashboard-files {:team-id team-id
+                                                            :project-id (:project-id file)}))}
+       (:name project) " /"]
+      (if @editing?
+        [:input.file-name
+         {:type "text"
+          :ref edit-input-ref
+          :on-blur handle-blur
+          :on-key-down handle-name-keydown
+          :auto-focus true
+          :default-value (:name file "")}]
+        [:span
+         {:on-double-click start-editing-name}
+         (:name file)])]
      (when (:is-shared file)
        [:div.shared-badge i/library])
 
@@ -94,83 +188,111 @@
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :rules))}
         [:span
          (if (contains? layout :rules)
-           (t locale "workspace.header.menu.hide-rules")
-           (t locale "workspace.header.menu.show-rules"))]
-        [:span.shortcut "Ctrl+r"]]
+           (tr "workspace.header.menu.hide-rules")
+           (tr "workspace.header.menu.show-rules"))]
+        [:span.shortcut (sc/get-tooltip :toggle-rules)]]
 
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :display-grid))}
         [:span
          (if (contains? layout :display-grid)
-           (t locale "workspace.header.menu.hide-grid")
-           (t locale "workspace.header.menu.show-grid"))]
-        [:span.shortcut "Ctrl+'"]]
+           (tr "workspace.header.menu.hide-grid")
+           (tr "workspace.header.menu.show-grid"))]
+        [:span.shortcut (sc/get-tooltip :toggle-grid)]]
 
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :snap-grid))}
         [:span
          (if (contains? layout :snap-grid)
-           (t locale "workspace.header.menu.disable-snap-grid")
-           (t locale "workspace.header.menu.enable-snap-grid"))]
-        [:span.shortcut "Ctrl+Shift+'"]]
+           (tr "workspace.header.menu.disable-snap-grid")
+           (tr "workspace.header.menu.enable-snap-grid"))]
+        [:span.shortcut (sc/get-tooltip :toggle-snap-grid)]]
 
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :sitemap :layers))}
         [:span
          (if (or (contains? layout :sitemap) (contains? layout :layers))
-           (t locale "workspace.header.menu.hide-layers")
-           (t locale "workspace.header.menu.show-layers"))]
-        [:span.shortcut "Ctrl+l"]]
+           (tr "workspace.header.menu.hide-layers")
+           (tr "workspace.header.menu.show-layers"))]
+        [:span.shortcut (sc/get-tooltip :toggle-layers)]]
 
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :colorpalette))}
         [:span
          (if (contains? layout :colorpalette)
-           (t locale "workspace.header.menu.hide-palette")
-           (t locale "workspace.header.menu.show-palette"))]
-        [:span.shortcut "Ctrl+p"]]
+           (tr "workspace.header.menu.hide-palette")
+           (tr "workspace.header.menu.show-palette"))]
+        [:span.shortcut (sc/get-tooltip :toggle-palette)]]
 
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :assets))}
         [:span
          (if (contains? layout :assets)
-           (t locale "workspace.header.menu.hide-assets")
-           (t locale "workspace.header.menu.show-assets"))]
-        [:span.shortcut "Ctrl+i"]]
+           (tr "workspace.header.menu.hide-assets")
+           (tr "workspace.header.menu.show-assets"))]
+        [:span.shortcut (sc/get-tooltip :toggle-assets)]]
+
+       [:li {:on-click #(st/emit! (dw/select-all))}
+        [:span (tr "workspace.header.menu.select-all")]
+        [:span.shortcut (sc/get-tooltip :select-all)]]
 
        [:li {:on-click #(st/emit! (dw/toggle-layout-flags :dynamic-alignment))}
         [:span
          (if (contains? layout :dynamic-alignment)
-           (t locale "workspace.header.menu.disable-dynamic-alignment")
-           (t locale "workspace.header.menu.enable-dynamic-alignment"))]
-        [:span.shortcut "Ctrl+a"]]
+           (tr "workspace.header.menu.disable-dynamic-alignment")
+           (tr "workspace.header.menu.enable-dynamic-alignment"))]
+        [:span.shortcut (sc/get-tooltip :toggle-alignment)]]
+
+       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :scale-text))}
+        [:span
+         (if (contains? layout :scale-text)
+           (tr "workspace.header.menu.disable-scale-text")
+           (tr "workspace.header.menu.enable-scale-text"))]
+        [:span.shortcut (sc/get-tooltip :toggle-scale-text)]]
 
        (if (:is-shared file)
          [:li {:on-click on-remove-shared}
-          [:span (t locale "dashboard.grid.remove-shared")]]
+          [:span (tr "dashboard.remove-shared")]]
          [:li {:on-click on-add-shared}
-          [:span (t locale "dashboard.grid.add-shared")]])
+          [:span (tr "dashboard.add-shared")]])
+
+       [:li.export-file {:on-click on-export-files}
+        [:span (tr "dashboard.export-single")]]
+
+       (when cfg/feedback-enabled
+         [:li.feedback {:on-click (st/emitf (rt/nav :settings-feedback))}
+          [:span (tr "labels.give-feedback")]
+          [:span.primary-badge "ALPHA"]])
        ]]]))
 
 ;; --- Header Component
 
 (mf/defc header
-  [{:keys [file layout project] :as props}]
-  (let [locale (i18n/use-locale)
-        team-id (:team-id project)
-        go-back #(st/emit! (rt/nav :dashboard-team {:team-id team-id}))
-        zoom (mf/deref refs/selected-zoom)
-        page (mf/deref refs/workspace-page)
-        locale (i18n/use-locale)
-        router (mf/deref refs/router)
-        view-url (rt/resolve router :viewer {:page-id (:id page)} {:index 0})]
+  [{:keys [file layout project page-id] :as props}]
+  (let [team-id  (:team-id project)
+        zoom     (mf/deref refs/selected-zoom)
+        params   {:page-id page-id :file-id (:id file)}
+
+        go-back
+        (mf/use-callback
+         (mf/deps project)
+         (st/emitf (dw/go-to-dashboard project)))
+
+        go-viewer
+        (mf/use-callback
+         (mf/deps file page-id)
+         (st/emitf (dw/go-to-viewer params)))]
+
     [:header.workspace-header
      [:div.main-icon
       [:a {:on-click go-back} i/logo-icon]]
 
      [:& menu {:layout layout
                :project project
-               :file file}]
+               :file file
+               :team-id team-id}]
 
      [:div.users-section
-      [:& presence/active-sessions]]
+      [:& active-sessions]]
 
      [:div.options-section
+      [:& persistence-state-widget]
+
       [:& zoom-widget
        {:zoom zoom
         :on-increase #(st/emit! (dw/increase-zoom nil))
@@ -179,8 +301,8 @@
         :on-zoom-fit #(st/emit! dw/zoom-to-fit-all)
         :on-zoom-selected #(st/emit! dw/zoom-to-selected-shape)}]
 
-      [:a.btn-icon-dark.btn-small
-       {;; :target "__blank"
-        :alt (t locale "workspace.header.viewer")
-        :href (str "#" view-url)} i/play]]]))
+      [:a.btn-icon-dark.btn-small.tooltip.tooltip-bottom-left
+       {:alt (tr "workspace.header.viewer" (sc/get-tooltip :open-viewer))
+        :on-click go-viewer}
+       i/play]]]))
 
